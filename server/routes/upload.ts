@@ -6,9 +6,32 @@ import { Readable } from "stream";
 import { storage } from "../storage";
 import type { InsertOrderData } from "@shared/schema";
 
+// Enhanced multer configuration for PM2 and cross-device compatibility
 const upload = multer({ 
   storage: multer.memoryStorage(),
-  limits: { fileSize: 200 * 1024 * 1024 } // 200MB limit
+  limits: { 
+    fileSize: 200 * 1024 * 1024, // 200MB limit
+    fieldSize: 10 * 1024 * 1024,  // 10MB field size
+    files: 1 // Single file only
+  },
+  fileFilter: (req, file, cb) => {
+    // Validate file types for security
+    const allowedTypes = [
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/vnd.ms-excel',
+      'text/csv',
+      'application/csv'
+    ];
+    
+    const allowedExtensions = ['.xlsx', '.xls', '.csv'];
+    const fileExtension = file.originalname.toLowerCase().slice(file.originalname.lastIndexOf('.'));
+    
+    if (allowedTypes.includes(file.mimetype) || allowedExtensions.includes(fileExtension)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Invalid file type. Only Excel and CSV files are allowed.'));
+    }
+  }
 });
 
 // Column mapping for case-insensitive auto-detection
@@ -86,8 +109,25 @@ function generateProductUid(sku: string | null, productName: string, dropshipper
 }
 
 export function registerUploadRoutes(app: Express): void {
+  // Enhanced error handling middleware
+  const handleUploadError = (err: any, req: any, res: any, next: any) => {
+    console.error('Upload error:', err);
+    if (err instanceof multer.MulterError) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ message: 'File too large. Maximum size is 200MB.' });
+      }
+      if (err.code === 'LIMIT_UNEXPECTED_FILE') {
+        return res.status(400).json({ message: 'Unexpected file field. Please upload only one file.' });
+      }
+    }
+    if (err.message.includes('Invalid file type')) {
+      return res.status(400).json({ message: err.message });
+    }
+    return res.status(500).json({ message: 'File upload failed. Please try again.' });
+  };
+
   // Preview file headers for manual mapping
-  app.post('/api/preview-file', upload.single('file'), async (req, res) => {
+  app.post('/api/preview-file', upload.single('file'), handleUploadError, async (req, res) => {
     try {
       console.log('Preview API called with file:', req.file?.originalname);
       if (!req.file) {
@@ -151,8 +191,8 @@ export function registerUploadRoutes(app: Express): void {
     }
   });
 
-  // File upload and processing with manual mapping
-  app.post('/api/upload', upload.single('file'), async (req, res) => {
+  // File upload and processing with manual mapping - Enhanced for PM2 and cross-device
+  app.post('/api/upload', upload.single('file'), handleUploadError, async (req, res) => {
     try {
       if (!req.file) {
         return res.status(400).json({ message: 'No file uploaded' });
