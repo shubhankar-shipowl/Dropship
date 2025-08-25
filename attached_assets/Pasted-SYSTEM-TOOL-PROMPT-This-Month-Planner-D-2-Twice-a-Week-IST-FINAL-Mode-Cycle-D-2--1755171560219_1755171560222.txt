@@ -1,0 +1,85 @@
+SYSTEM / TOOL PROMPT — This Month Planner (D+2 · Twice a Week · IST) — FINAL
+
+Mode
+- Cycle: D+2  // Delivered cutoff = run_date − 2 days (inclusive, IST)
+- Frequency: Twice a Week → Tuesdays & Fridays
+- Month: August 2025 (IST)
+
+STRICT: NO LEAKAGE / NO AUTO-SHIFT
+- Payout calculation me sirf niche diye gaye FIXED windows ka data lo.
+- In windows ke bahar ka data include MAT karo.
+- Pichhle run me paid rows ko Payout Log se suppress karo (double pay avoid).
+
+WINDOWS (fixed, inclusive, IST) — USE AS-IS
+Run dates (Aug 2025 Tue/Fri): 01, 05, 08, 12, 15, 19, 22, 26, 29
+
+1) Run: Fri 2025-08-01
+   Delivered Window: 2025-07-28 → 2025-07-30   // D+2 cutoff of Aug 1 = Jul 30
+   Order Window:     2025-07-30 → 2025-08-01
+
+2) Run: Tue 2025-08-05
+   Delivered Window: 2025-07-31 → 2025-08-03
+   Order Window:     2025-08-02 → 2025-08-05
+
+3) Run: Fri 2025-08-08
+   Delivered Window: 2025-08-04 → 2025-08-06
+   Order Window:     2025-08-06 → 2025-08-08
+
+4) Run: Tue 2025-08-12
+   Delivered Window: 2025-08-07 → 2025-08-10
+   Order Window:     2025-08-09 → 2025-08-12
+
+5) Run: Fri 2025-08-15
+   Delivered Window: 2025-08-11 → 2025-08-13
+   Order Window:     2025-08-13 → 2025-08-15
+
+6) Run: Tue 2025-08-19
+   Delivered Window: 2025-08-14 → 2025-08-17
+   Order Window:     2025-08-16 → 2025-08-19
+
+7) Run: Fri 2025-08-22
+   Delivered Window: 2025-08-18 → 2025-08-20
+   Order Window:     2025-08-20 → 2025-08-22
+
+8) Run: Tue 2025-08-26
+   Delivered Window: 2025-08-21 → 2025-08-24
+   Order Window:     2025-08-23 → 2025-08-26
+
+9) Run: Fri 2025-08-29
+   Delivered Window: 2025-08-25 → 2025-08-27
+   Order Window:     2025-08-27 → 2025-08-29
+
+COMPUTATION (per run)
+- Shipping (Order window):
+  Select rows where Status != "Cancelled" AND OrderDate ∈ [Order Window],
+  then Shipping_Total = Σ (Shipped Qty × shipping_rate_per_order[Shipping Provider]).
+
+- Delivered side (Delivered window):
+  Select rows where Status contains "Delivered" AND DeliveredDate ∈ [Delivered Window].
+  COD/unit = (Order-level COD Amount) / (Σ Qty by OrderID) → round(2).
+  COD_Total = Σ (Delivered Qty × COD/unit).
+  ProductCost_Total = Σ (Delivered Qty × product_cost_per_unit[dropshipper_email, product_uid]).
+
+- Payable_before_recon = COD_Total − (Shipping_Total + ProductCost_Total).
+
+- Reconciliation (optional if PAYOUT_LOG available):
+  If any identity (order_id, waybill, dropshipper_email, product_uid) previously paid as Delivered
+  and now RTS/RTO, add negative adjustment = −(previously credited payable).
+  Final_Payable = Payable_before_recon + Σ Adjustments.
+
+RULES
+- Sirf FIXED windows ka data lo; koi “smart” shifting/merging/auto-partition OFF.
+- Currency INR; unit rates round(2); totals round(0); timezone Asia/Kolkata.
+- Missing product prices / shipping rates → calculation block, Settings/Template se fill karao.
+- Delivered Qty ≤ Shipped Qty; breach → Audit me flag.
+
+OUTPUTS
+- Per-run summary (Run Date, Delivered Cutoff used, COD Total, Product Cost Total, Shipping Total,
+  Adjustments, Final Payable) + per-dropshipper detail sheet.
+- Export button per run: Payout_<run_date>.xlsx
+- Optional consolidated export: PayoutPlanner_2025-08_D+2_TueFri.xlsx
+
+USER PROMPTS (front-end copy)
+- “Date range lagao to payout calculation sirf isi window ke data par hoga—logic idhar-udhar mat karo.”
+- “Cycle: D+2, Frequency: Tue & Fri. Niche diye gaye runs par hi sheets banengi.”
+- “Agar koi row pehle pay ho chuki hai, woh is run me auto-skip hogi (Payout Log check).”

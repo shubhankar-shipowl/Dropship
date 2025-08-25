@@ -1,0 +1,57 @@
+SYSTEM / TOOL PROMPT — Fixed Windows + D+2 (Twice a Week) — NO LEAKAGE
+
+Context (LOCK THESE WINDOWS — do not alter):
+- Delivered Window (LOCKED): 2025-07-24 → 2025-08-09  [inclusive, IST]
+- Order Window (LOCKED, for shipping): 2025-07-29 → 2025-08-12  [inclusive, IST]
+- Cycle: D+2  (Delivered cutoff = run_date − 2 days)
+- Frequency: Twice a Week → Tuesdays & Fridays only
+- Month in focus: AUGUST 2025
+
+STRICT RULE — NO LEAKAGE:
+- Payout calculation must include **only** rows within the above two windows.
+- DO NOT stretch, shift, or auto-partition dates outside these ranges.
+- If a run’s computed delivered_cutoff (run_date−2) > Delivered_To, then **cap** to Delivered_To (= 2025-08-09).
+- If a run’s computed delivered_cutoff < Delivered_From, mark that run as “No Data”.
+- Shipping always uses the locked Order Window; do not recompute by run_date.
+- If PAYOUT_LOG exists, suppress duplicates across runs (avoid double pay).
+
+Per-Run Computation (each listed run_date below):
+1) Delivered side:
+   - delivered_cutoff = min(run_date − 2 days, 2025-08-09)
+   - delivered selection = rows with Status=Delivered AND DeliveredDate ∈ [2025-07-24, delivered_cutoff]
+   - COD per-unit = (order-level COD / ΣQty by OrderID) → round(2)
+   - COD_Total = Σ(DeliveredQty × COD per-unit)
+   - ProductCost_Total = Σ(DeliveredQty × product_cost_per_unit)
+2) Shipping side:
+   - shipping selection = rows with Status != Cancelled AND OrderDate ∈ [2025-07-29, 2025-08-12]
+   - Shipping_Total = Σ(Qty × shipping_rate_per_order[provider])
+3) Payable:
+   - Payable = COD_Total − (Shipping_Total + ProductCost_Total)
+   - If reconciliation (RTS/RTO) applies via PAYOUT_LOG → add negative adjustments; Final_Payable = Payable + Adjustments
+4) Output per run:
+   - Show: Run Date, Delivered Cutoff Used, Delivered Totals (COD/Product), Shipping Total (locked window), Adjustments, Final Payable.
+   - Export option: “Payout_<run_date>.xlsx”
+   - Master/Audit sheets as per spec.
+
+THIS MONTH — RUN DATES (AUG 2025, Tue/Fri):
+- Total payout sheets this month (Twice-a-Week): **9**
+- Run dates (IST):
+  • Fri 2025-08-01   → delivered_cutoff = 2025-07-30
+  • Tue 2025-08-05   → delivered_cutoff = 2025-08-03
+  • Fri 2025-08-08   → delivered_cutoff = 2025-08-06
+  • Tue 2025-08-12   → delivered_cutoff = min(2025-08-10, 2025-08-09) = **2025-08-09 (capped)**
+  • Fri 2025-08-15   → delivered_cutoff = 2025-08-13 → **cap to 2025-08-09**
+  • Tue 2025-08-19   → delivered_cutoff = 2025-08-17 → **cap to 2025-08-09**
+  • Fri 2025-08-22   → delivered_cutoff = 2025-08-20 → **cap to 2025-08-09**
+  • Tue 2025-08-26   → delivered_cutoff = 2025-08-24 → **cap to 2025-08-09**
+  • Fri 2025-08-29   → delivered_cutoff = 2025-08-27 → **cap to 2025-08-09**
+
+UI PROMPTS (user-facing):
+- “Delivered Window locked: 24 Jul–09 Aug 2025. Order Window locked: 29 Jul–12 Aug 2025. Sirf isi data par payout compute hoga.”
+- “Cycle: D+2, Frequency: Tue & Fri. Listed run dates par hi sheets bnenge.”
+- “Agar kisi run ka delivered_cutoff 09 Aug se aage ja raha hai to cap 09 Aug hi use hoga.”
+- “Report download karein: har run ke liye totals + consolidated summary. Duplicate payouts prevent karne ke liye Payout Log check hoga.”
+
+Notes:
+- Currency INR; unit rates round(2), totals round(0); all dates IST.
+- Missing prices/rates → block and prompt to fill in Settings/Template.

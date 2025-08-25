@@ -1,0 +1,66 @@
+SYSTEM PROMPT — Payout Run (Twice-a-Week, D+2) — Fixed Windows
+
+Purpose (statement to show on report):
+“This payment covers products delivered between **24 Jul 2025** and **09 Aug 2025**.
+From this amount, we deduct shipping for orders dated between **29 Jul 2025** and **12 Aug 2025**.
+Cycle: **D+2**, Frequency: **Twice a week (Tue & Fri)**.”
+
+Config:
+- Frequency: Twice a week (run days = Tuesday & Friday)
+- Method: D+2 (Delivered cutoff = run_date − 2 days; NOTE: is run ke liye delivered/order windows **manually fixed** as below)
+- Timezone: Asia/Kolkata (IST), inclusive date bounds
+- Dropshipper scope: <All / selected emails>
+
+Windows for THIS RUN (LOCKED):
+- Delivered Date window (COD & Product Cost): 2025-07-24 → 2025-08-09
+- Order Date window (Shipping):               2025-07-29 → 2025-08-12
+
+Data Prep:
+1) Auto-map columns (case-insensitive); Status="Cancelled" rows drop.
+2) product_uid := SKU else Product Name.
+3) Require maps:
+   - PRICE_MAP(dropshipper_email, product_uid → product_cost_per_unit, currency=INR)
+   - SHIP_MAP(shipping_provider → shipping_rate_per_order, currency=INR)
+   Block calc if any needed entries missing.
+
+Calculations:
+A) Shipping (Order window)
+   - Filter: Status != Cancelled AND OrderDate ∈ [2025-07-29, 2025-08-12]
+   - Shipping_Total = Σ (Qty_shipped × shipping_rate_per_order[provider])
+
+B) COD & Product Cost (Delivered window)
+   - Filter: Status contains “Delivered” AND DeliveredDate ∈ [2025-07-24, 2025-08-09]
+   - COD per-unit (order-level allocation) = COD_Amount(order_id) / ΣQty(order_id) → round(2)
+   - COD_Total = Σ (DeliveredQty × COD per-unit)
+   - ProductCost_Total = Σ (DeliveredQty × product_cost_per_unit[dropshipper_email, product_uid])
+
+C) (Optional) RTS/RTO Reconciliation
+   - If PAYOUT_LOG shows any previously-paid identity now RTS/RTO → add negative adjustment of prior paid_amount.
+   - Adjustments_Total = Σ adjustments
+
+D) Payable (this run)
+   Payable = COD_Total − (ProductCost_Total + Shipping_Total) + Adjustments_Total
+
+Outputs:
+- Summary (cards): {COD_Total, ProductCost_Total, Shipping_Total, Adjustments_Total, Final Payable}
+- Detail (per dropshipper): columns =
+  Order ID, Waybill, Product, SKU/UID, Shipped Qty, Delivered Qty, COD Rate, COD Received,
+  Shipping Rate, Shipping Cost, Product Cost, Payable, Delivered Date, RTS Date
+- Workbook export: Payout_20250812_Dplus2_TueFri.xlsx  (use actual run date)
+- Header note (repeat Purpose statement at top of report)
+
+Rules:
+- Unit rates round(2), totals round(0), INR default
+- Delivered Qty ≤ Shipped Qty → flag in Audit
+- Missing/duplicate price/rate keys → block with actionable error
+
+UI Controls (for user on this screen):
+- Dropshipper dropdown (All / multi-select)
+- Read-only chips showing locked windows:
+  “Delivered: 24 Jul → 09 Aug 2025” | “Order: 29 Jul → 12 Aug 2025”
+- Button: Generate → shows table + totals
+- Button: Download (CSV/XLSX)
+
+Microcopy:
+- “This run uses **D+2** and **Twice-a-week (Tue & Fri)** cadence with **fixed windows** above.”
+- “Shipping computed by Order Date window; COD & Product Cost by Delivered Date window.”

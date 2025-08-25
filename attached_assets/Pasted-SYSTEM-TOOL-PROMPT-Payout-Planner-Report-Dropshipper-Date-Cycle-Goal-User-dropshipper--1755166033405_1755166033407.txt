@@ -1,0 +1,124 @@
+SYSTEM / TOOL PROMPT — Payout Planner Report (Dropshipper + Date + Cycle)
+
+Goal:
+User dropshipper & date range select kare → payment cycle (D+N + frequency) choose kare →
+tool run dates generate karke har run ki payout window compute kare, amounts nikaale,
+table me “kitni sheets” + “kitna payable” dikhaye, aur Download (CSV/XLSX) de.
+
+A) Inputs (UI)
+1) Dropshipper:
+   - Dropdown: [All Dropshippers] ya specific email(s) multi-select.
+2) Date Presets:
+   - This Month (IST): [first day of current month → today]
+   - Last 30 Days (IST): [today-29 → today]
+   - Custom: From, To (inclusive).
+3) Payment Cycle:
+   - Cutoff Offset: D+1 / D+2 / D+3 / D+4 / D+5 / D+6 / D+7
+     (Delivered cutoff = run_date − N days; N = 1..7)
+   - Frequency (run dates):
+     • Monthly (default run = month-end in range; editable)
+     • Twice a Week (Tue & Fri)
+     • Thrice a Week (Mon, Wed & Fri)
+     • Daily (Mon–Fri only; Sat/Sun exclude)
+4) Advanced (optional):
+   - Anchored mode toggle: if ON, windows continue from last_payment_done_on / last_delivered_cutoff (persisted).
+   - Otherwise Quick Report mode: windows partition only within selected date range.
+
+B) Data Requirements
+- Auto-mapped cleaned data (Cancelled removed).
+- PRICE_MAP(dropshipper_email, product_uid → product_cost_per_unit, currency)
+- SHIP_MAP(shipping_provider → shipping_rate_per_order, currency)
+- PAYOUT_LOG for reconciliation (optional; if present, show Adjustments).
+
+C) Window Computation (IST, inclusive)
+Given:
+- date_range = [R_start, R_end] from preset/custom
+- frequency = Monthly / Twice (Tue,Fri) / Thrice (Mon,Wed,Fri) / Daily (Mon–Fri)
+- D+N offset (N=1..7)
+
+1) Generate all run_dates in [R_start, R_end] per frequency:
+   - Monthly: month-end(s) within date_range (or chosen day), bounded to [R_start, R_end]
+   - Twice: all Tuesdays & Fridays in range
+   - Thrice: all Mondays, Wednesdays & Fridays in range
+   - Daily: all weekdays (Mon–Fri) in range (skip Sat/Sun)
+
+2) For each run_date in chronological order:
+   If Anchored mode:
+     order_start = (prev_order_end ? prev_order_end + 1 day : max(R_start, min(OrderDate in range)))
+     order_end   = min(run_date, R_end)
+     del_start   = (prev_del_end ? prev_del_end + 1 day : max(R_start, min(DeliveredDate in range)))
+     del_end     = min(run_date - N days, R_end)
+   Else (Quick Report, no anchors):
+     - Partition by previous cutoffs within [R_start, R_end]:
+       order_start = (first run) R_start else (prev_order_end + 1)
+       order_end   = min(run_date, R_end)
+       del_start   = (first run) R_start else (prev_del_end + 1)
+       del_end     = min(run_date - N days, R_end)
+
+   Validate: order_start ≤ order_end and del_start ≤ del_end; else mark run “No Window”.
+
+D) Calculations (per run_date)
+- Shipping (Order window):
+  rows where Status != Cancelled AND OrderDate ∈ [order_start, order_end]
+  Shipping_Total = Σ (Qty × shipping_rate_per_order[provider])
+
+- Delivered (Delivered window):
+  rows where Status contains “Delivered” AND DeliveredDate ∈ [del_start, del_end]
+  COD per-unit = (order-level COD / ΣQty for that OrderID) → round(2)
+  COD_Total = Σ (DeliveredQty × COD per-unit)
+  ProductCost_Total = Σ (DeliveredQty × product_cost_per_unit[dropshipper_email, product_uid])
+
+- Adjustments (optional; if PAYOUT_LOG available):
+  If any identity was previously paid and ab RTS/RTO in current data → add negative reversal
+  Adjustments_Total = Σ negative lines
+  Flags: “Already Paid—Skipped” for duplicate paid Delivered.
+
+- Payable (per run):
+  Payable = COD_Total − (Shipping_Total + ProductCost_Total) + Adjustments_Total
+
+E) Report Table (UI + Export)
+Columns (per run_date & per selected dropshipper/group):
+- Run Date
+- Cycle (e.g., D+2, Twice/Tue-Fri)
+- Order Start, Order End
+- Delivered Start, Delivered End
+- Orders Count (in windows)
+- COD Total
+- Product Cost Total
+- Shipping Total
+- Adjustments Total (if any)
+- Final Payable
+- Dropshipper Email (or “All” if grouped)
+
+Footer:
+- Total Runs (“Payment Sheets” count)
+- Grand COD, Grand Product Cost, Grand Shipping, Grand Adjustments, Grand Payable
+
+Actions:
+- Download CSV
+- Download XLSX → filename: PayoutPlanner_<dropshipper_or_all>_<R_start>_to_<R_end>_D+N_<freq>.xlsx
+
+F) Rules
+- Currency default INR. Unit rates round(2), totals round(0). IST timezone.
+- Missing price/rate entries → block that dropshipper’s payable and show “Fill in Settings / Upload Template”.
+- Delivered Qty ≤ Shipped Qty else flag in row-level Audit (available via detail drilldown).
+- Exclude Sat/Sun for Daily frequency; Twice/Thrice fixed weekdays as specified.
+
+G) Microcopy (prompts)
+- “Select dropshipper(s) and date preset. Then choose payment cycle (D+N + frequency).”
+- “Generated run dates: {list}. D+{N} cutoff applies: Delivered up to {run_date − N days}.”
+- “{missing_prices} products / {missing_providers} providers need rates. Fill in Settings or upload template to include amounts.”
+- “Report ready — {runs} sheets, Total Payable: ₹{grand_payable}. Download to share.”
+
+H) Pseudocode (core loop)
+runs = generate_runs(R_start, R_end, frequency)   // weekdays filter applied if Daily
+for i, run_date in enumerate(runs):
+  del_end = run_date - N days
+  (order_start, order_end, del_start, del_end) = compute_windows(i, anchors_or_range)
+  shipping = sum_ship(OrderDate in [order_start, order_end])
+  (cod_total, prod_total) = sum_delivered(DeliveredDate in [del_start, del_end])
+  adjustments = rts_rto_reversals(PAYOUT_LOG, current_data, up_to=del_end)
+  payable = cod_total - (shipping + prod_total) + adjustments
+  append row to Report
+
+show table + footer totals; enable CSV/XLSX export.

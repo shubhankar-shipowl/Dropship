@@ -1,0 +1,102 @@
+SYSTEM / TOOL PROMPT — Settlement Scheduler (Manual: D+2, Weekly/Monthly)
+
+Scope:
+- User raw Excel/CSV upload karega → auto-map columns (cancelled drop) → Dual-Range Payout logic same rahega.
+- Iske upar manual settlement scheduler add karo:
+  • Frequency: Monthly / Twice a week (Tue & Fri) / Thrice a week (Mon, Wed & Fri)
+  • Mode: D+2 (Delivered-based cutoff) — IST timezone
+
+A) Persisted Anchors (DB me save/restore):
+- last_payment_done_on (date)    // last payout execution date
+- last_delivered_cutoff (date)   // last delivered window ka END (inclusive)
+
+B) User Controls (Settings → “Settlement” tab):
+1) Frequency:
+   - Monthly: user ek month select kare (e.g., July 2025)
+   - Twice a week: fixed days = Tuesday, Friday
+   - Thrice a week: fixed days = Monday, Wednesday, Friday
+   (UI me calendar preview dikhao jis din runs honge)
+2) Run Date (Manual):
+   - “Run settlement on” → date picker (agar Weekly mode me ho to next eligible weekday preselect karo; user override kar sakta hai)
+3) D+2 toggle: [On] (default). D+2 on hone par delivered cutoff = (run_date - 2 days)
+4) Anchors:
+   - last_payment_done_on (auto-filled from DB; editable)
+   - last_delivered_cutoff (auto-filled from DB; editable)
+5) Preview windows (read-only, auto-computed — override toggle allow):
+   - ORDER DATE window  = (order_start → order_end)
+   - DELIVERED DATE window = (del_start → del_end)
+
+C) Window Computation (IST, inclusive):
+Inputs:
+- run_date (manual selection)
+- last_payment_done_on (persisted)
+- last_delivered_cutoff (persisted)
+- Dplus2 = 2 days
+
+Compute:
+- order_start = (last_payment_done_on ? last_payment_done_on + 1 day : min(Order Date in data))
+- order_end   = run_date
+- del_start   = (last_delivered_cutoff ? last_delivered_cutoff + 1 day : min(Delivered Date in data))
+- del_end     = (D+2 enabled ? run_date - 2 days : run_date)
+
+Validations:
+- order_start ≤ order_end, del_start ≤ del_end else error.
+- run_date cannot be < last_payment_done_on or < last_delivered_cutoff (warn/confirm).
+
+D) Calculation (ties into existing Dual-Range logic):
+1) Shipping_Total_OrderDate:
+   - Filter rows: Status != Cancelled AND Order Date ∈ [order_start, order_end]
+   - Shipping = Σ (Qty_shipped × shipping_rate_per_order by provider)
+2) COD/Product (Delivered window):
+   - Filter rows: Status contains "Delivered" AND Delivered Date ∈ [del_start, del_end]
+   - COD per-unit = order-level COD / ΣQty(order_id) → round(2)
+   - COD_Total_DeliveredDate = Σ (Delivered Qty × COD per-unit)
+   - ProductCost_Total_DeliveredDate = Σ (Delivered Qty × product_cost_per_unit from PRICE_MAP)
+3) Payable (before recon) = COD_Total_DeliveredDate − (Shipping_Total_OrderDate + ProductCost_Total_DeliveredDate)
+4) Reconciliation:
+   - If any identity (order_id, waybill, dropshipper_email, product_uid) previously paid (PAYOUT_LOG) and ab RTS/RTO,
+     add negative adjustment equal to prior paid_amount. Sum to Adjustments_Total.
+5) Final_Payable = Payable + Adjustments_Total
+
+E) Run & Persist:
+- “Generate Preview” → Summary cards + per-dropshipper detail.
+- “Export Workbook” → Payout_<YYYYMMDD>.xlsx (IST)
+- On successful export:
+  - Update anchors:
+    last_payment_done_on   = run_date
+    last_delivered_cutoff  = del_end
+  - Append Payout Log (paid_on=run_date, period_from/to = (order_start/order_end & del_start/del_end), amount)
+
+F) UI Copy (micro-prompts):
+- After selecting frequency: “Run settlement date choose kijiye (calendar se).”
+- On run_date pick: “Order window: {order_start} → {order_end} | Delivered (D+2): {del_start} → {del_end}”
+- If override: “Aap dates manually change kar sakte hain; D+2 off karne par delivered end = run_date hoga.”
+- Before export: “Reconciliation complete: ₹<adjust_total> reversed (RTS/RTO). Final payable ready.”
+
+G) Example (as requested):
+- Month selected: July 2025
+- Mode: D+2 = ON, Frequency: Twice a week (Tue & Fri)
+- Payout (run) on: Tuesday
+- Computed windows example:
+  order_start = 27 Jun 2025, order_end = 01 Jul 2025
+  del_start   = 21 Jun 2025, del_end = 28 Jun 2025  // user example
+- Sheet-1 Export: rows filtered to above windows + summary & payout sheets.
+
+H) Safeguards:
+- If PRICE_MAP/SHIP_MAP missing entries → block calc; Settings pe redirect ya template CSV download/upload.
+- All dates IST, inclusive boundaries. Unit rates round(2), totals round(0), INR default.
+
+I) Quick Pseudocode:
+run_date = user.pick()
+order_start = (last_payment_done_on ? last_payment_done_on + 1d : minOrderDate)
+order_end = run_date
+del_start = (last_delivered_cutoff ? last_delivered_cutoff + 1d : minDeliveredDate)
+del_end = (Dplus2 ? run_date - 2d : run_date)
+
+shipping_total = sum_ship(OrderDate ∈ [order_start, order_end])
+cod_total, prod_total = sum_delivered(DeliveredDate ∈ [del_start, del_end])
+base_payable = cod_total - (shipping_total + prod_total)
+adjustments = rts_rto_reversals_since_last(PAYOUT_LOG, current_data)
+final_payable = base_payable + adjustments
+
+persist(last_payment_done_on = run_date, last_delivered_cutoff = del_end)

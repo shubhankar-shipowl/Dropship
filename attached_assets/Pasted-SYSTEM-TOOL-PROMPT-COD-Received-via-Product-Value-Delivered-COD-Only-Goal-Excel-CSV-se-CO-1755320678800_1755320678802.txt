@@ -1,0 +1,76 @@
+SYSTEM / TOOL PROMPT — COD Received via Product Value (Delivered × COD Only)
+
+Goal
+- Excel/CSV se COD wale aur Delivered rows nikaalna aur unki “Product Value” ka sum = **COD_Received**.
+- Sirf specified rows ka data use karo; idhar-udhar ka logic apply mat karo.
+
+A) Input & Auto-Mapping (case-insensitive)
+- File: Excel (.xlsx/.xls) / CSV. If multi-sheet, sheet picker (default: first).
+- Map these fields (dropdown if auto-map fail):
+  • MODE           ← Mode | Payment Mode | Payment_Method | Payment Type | Pay Mode
+  • STATUS         ← Status | Order Status | Fulfillment Status
+  • DELIVERED_DATE ← Delivered Date | Delivery Date (optional filter)
+  • PRODUCT_VALUE  ← Product Value | Total Product Value | Item Amount | Net Amount | Order Amount | Total
+
+B) Filters (strict)
+- COD detect: normalize(MODE) → lowercase, strip spaces/punct (“c.o.d”, “Cash on Delivery”, “COD ” → “cod”)
+  Keep row if MODE contains “cod”.
+- Delivered detect: normalize(STATUS) contains “delivered”.
+- Optional Date filter: If user gives Delivered Date range [From, To] (IST, inclusive), keep rows with
+  DELIVERED_DATE ∈ range. If not provided, use all delivered COD rows.
+
+C) Amount Parsing (PRODUCT_VALUE)
+- Clean currency symbols (₹, INR), commas, spaces → numeric.
+- Non-numeric/blank → mark Invalid_Amount=Yes and **exclude** from totals (but show in extract).
+- Internal precision: 2 decimals; display totals rounded to 0 decimals (INR).
+
+D) Calculation (mention formula clearly)
+- **Formula:** COD_Received = Σ(Product_Value) for rows where (MODE = COD) AND (STATUS = Delivered)
+  [AND DELIVERED_DATE ∈ selected range, if provided].
+- Also compute:
+  • COD_Delivered_Row_Count
+  • COD_Received_Average = mean(valid Product_Value), 2 decimals
+
+E) Outputs
+1) Sheet: COD_Delivered_Extract
+   Columns: Row_Number | Mode | Status | Delivered_Date | Product_Value (numeric) | Invalid_Amount (Yes/No)
+   + Auto-include helpful columns if present: Order_ID, Waybill, SKU, Product Name.
+2) Sheet: COD_Received_Summary
+   Fields:
+   • Delivered_Date_Range_Used (or “All Delivered COD”)
+   • COD_Delivered_Row_Count
+   • COD_Received_Total (₹, rounded 0)
+   • COD_Received_Average (₹, 2 decimals)
+   • Invalid_Amount_Rows_Count
+   • Calculation_Note: "COD_Received = sum(Product Value) of Delivered COD rows only."
+3) UI Preview: Summary + first 100 rows of extract.
+4) Export:
+   • Excel: COD_Received_Report_<YYYYMMDD>.xlsx (IST)
+   • CSV (extract only): COD_Delivered_Extract_<YYYYMMDD>.csv
+
+F) Rules & Validations
+- Required mappings: MODE, STATUS, PRODUCT_VALUE. Missing → block & ask to map.
+- Delivered detection is case-insensitive “contains delivered”.
+- Currency default INR. Totals 0-decimal display; internal 2 decimals.
+- Timezone for dates/filenames: Asia/Kolkata.
+
+G) Microcopy (prompts)
+- “Map the columns: Mode, Status, Product Value (and Delivered Date if you want date filtering).”
+- “Select Delivered Date range (optional). If skipped, all Delivered COD rows will be used.”
+- “Found {n} Delivered COD rows. COD Received: ₹{total}.”
+- “{k} rows have invalid/blank Product Value and were excluded. Download report to review.”
+
+H) Pseudocode
+data = load(file)
+map MODE, STATUS, PRODUCT_VALUE, DELIVERED_DATE?
+rows = []
+for r in data:
+  if norm(MODE[r]) contains 'cod' and norm(STATUS[r]) contains 'delivered':
+     if date_filter_given:
+        if not (DELIVERED_DATE[r] in [from,to]): continue
+     amt = parse_amount(PRODUCT_VALUE[r])  // strip ₹, commas → float
+     if is_number(amt): rows.append(amt); mark invalid = No
+     else: mark invalid = Yes (exclude from sum)
+COD_Received_Total = round0(sum(valid amts))
+Average = round2(mean(valid amts)) if any
+write COD_Delivered_Extract, COD_Received_Summary; export
