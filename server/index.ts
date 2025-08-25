@@ -8,20 +8,34 @@ import path from 'path';
 
 const app = express();
 
-// CORS configuration for cross-device access
+// Enhanced CORS configuration for cross-device VPS access
 app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  const origin = req.headers.origin;
+  // Allow all origins for development and VPS access
+  res.header('Access-Control-Allow-Origin', origin || '*');
+  res.header(
+    'Access-Control-Allow-Methods',
+    'GET, POST, PUT, DELETE, OPTIONS, PATCH',
+  );
   res.header(
     'Access-Control-Allow-Headers',
-    'Origin, X-Requested-With, Content-Type, Accept, Authorization',
+    'Origin, X-Requested-With, Content-Type, Accept, Authorization, Cache-Control, Content-Length',
   );
-  res.header('Access-Control-Allow-Credentials', 'true');
+  res.header('Access-Control-Max-Age', '86400'); // Cache preflight for 24 hours
+
+  // Handle preflight OPTIONS requests
   if (req.method === 'OPTIONS') {
-    res.sendStatus(200);
-  } else {
-    next();
+    res.header('Access-Control-Allow-Credentials', 'false');
+    return res.sendStatus(200);
   }
+
+  // Only allow credentials for same-origin requests to avoid CORS issues
+  const host = req.get('host');
+  if (origin && host && origin.includes(host)) {
+    res.header('Access-Control-Allow-Credentials', 'true');
+  }
+
+  next();
 });
 
 // Session configuration for cross-device persistence with PostgreSQL store
@@ -47,9 +61,45 @@ app.use(
   }),
 );
 
-// Body parsing with increased limits for file uploads
-app.use(express.json({ limit: '250mb' }));
-app.use(express.urlencoded({ extended: true, limit: '250mb' }));
+// Body parsing with increased limits and timeout handling
+app.use(
+  express.json({
+    limit: '250mb',
+    verify: (req, res, buf) => {
+      // Add request size logging for debugging
+      if (buf && buf.length > 50 * 1024 * 1024) {
+        // Log requests over 50MB
+        const clientIP =
+          (req as any).ip || req.socket.remoteAddress || 'unknown';
+        console.log(
+          `Large request: ${buf.length / 1024 / 1024}MB from ${clientIP}`,
+        );
+      }
+    },
+  }),
+);
+app.use(
+  express.urlencoded({
+    extended: true,
+    limit: '250mb',
+  }),
+);
+
+// Request timeout middleware for large file uploads
+app.use((req, res, next) => {
+  // Set longer timeout for file upload endpoints
+  if (
+    req.path.includes('/api/upload') ||
+    req.path.includes('/api/preview-file')
+  ) {
+    req.setTimeout(10 * 60 * 1000); // 10 minutes for file uploads
+    res.setTimeout(10 * 60 * 1000);
+  } else {
+    req.setTimeout(2 * 60 * 1000); // 2 minutes for regular requests
+    res.setTimeout(2 * 60 * 1000);
+  }
+  next();
+});
 
 app.use((req, res, next) => {
   const start = Date.now();

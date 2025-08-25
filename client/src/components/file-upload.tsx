@@ -160,15 +160,60 @@ export default function FileUpload({ onUploadSuccess }: FileUploadProps) {
       formData.append('file', currentFile);
       formData.append('columnMapping', JSON.stringify(mapping));
 
-      const response = await fetch('/api/upload', {
-        method: 'POST',
-        body: formData,
-      });
+      // Enhanced fetch with timeout and retry logic for cross-device uploads
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10 * 60 * 1000); // 10 minute timeout
 
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.message || 'Upload failed');
-      }
+      const uploadWithRetry = async (attemptNumber: number = 1): Promise<Response> => {
+        try {
+          const response = await fetch('/api/upload', {
+            method: 'POST',
+            body: formData,
+            signal: controller.signal,
+            headers: {
+              // Let browser set Content-Type with boundary for multipart/form-data
+              'Cache-Control': 'no-cache',
+            },
+          });
+
+          clearTimeout(timeoutId);
+          
+          if (!response.ok) {
+            const errorText = await response.text();
+            let errorMessage = 'Upload failed';
+            try {
+              const error = JSON.parse(errorText);
+              errorMessage = error.message || errorMessage;
+            } catch {
+              errorMessage = errorText || errorMessage;
+            }
+            throw new Error(`${errorMessage} (Status: ${response.status})`);
+          }
+          
+          return response;
+        } catch (error) {
+          if (error instanceof Error && error.name === 'AbortError') {
+            throw new Error('Upload timeout - file too large or network too slow. Please try again.');
+          }
+          
+          // Retry on network errors (but not on 4xx/5xx responses)
+          if (attemptNumber < 3 && (
+            error instanceof Error && (
+              error.message.includes('fetch') || 
+              error.message.includes('network') ||
+              error.message.includes('Failed to fetch')
+            )
+          )) {
+            console.log(`Upload attempt ${attemptNumber} failed, retrying...`);
+            await new Promise(resolve => setTimeout(resolve, 2000 * attemptNumber)); // Exponential backoff
+            return uploadWithRetry(attemptNumber + 1);
+          }
+          
+          throw error;
+        }
+      };
+
+      const response = await uploadWithRetry();
 
       const result = await response.json();
       
@@ -187,7 +232,24 @@ export default function FileUpload({ onUploadSuccess }: FileUploadProps) {
 
     } catch (error) {
       console.error('Upload error:', error);
-      const errorMessage = error instanceof Error ? error.message : "An error occurred during upload.";
+      let errorMessage = "An error occurred during upload.";
+      
+      if (error instanceof Error) {
+        if (error.name === 'AbortError') {
+          errorMessage = "Upload timeout - please try again with a smaller file or better connection.";
+        } else if (error.message.includes('fetch') || error.message.includes('network')) {
+          errorMessage = "Network error - please check your internet connection and try again.";
+        } else if (error.message.includes('413')) {
+          errorMessage = "File too large for server - please try a smaller file.";
+        } else if (error.message.includes('400')) {
+          errorMessage = error.message || "Invalid file format - please check your file.";
+        } else if (error.message.includes('500')) {
+          errorMessage = "Server error - please try again later.";
+        } else {
+          errorMessage = error.message;
+        }
+      }
+      
       setUploadError(errorMessage);
       
       toast({
