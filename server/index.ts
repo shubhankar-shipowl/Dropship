@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import express, { type Request, Response, NextFunction } from 'express';
 import session from 'express-session';
+import connectPgSimple from 'connect-pg-simple';
 import { registerRoutes } from './routes';
 import { setupVite, serveStatic, log } from './vite';
 import path from 'path';
@@ -23,9 +24,17 @@ app.use((req, res, next) => {
   }
 });
 
-// Session configuration for cross-device persistence
+// Session configuration for cross-device persistence with PostgreSQL store
+const PgSession = connectPgSimple(session);
+
 app.use(
   session({
+    store: new PgSession({
+      conString: process.env.DATABASE_URL || process.env.DB_URL,
+      tableName: 'user_sessions', // Optional custom table name
+      createTableIfMissing: true,
+      pruneSessionInterval: 60 * 15, // Prune expired sessions every 15 minutes
+    }),
     secret: process.env.SESSION_SECRET || 'fallback-secret-key-for-development',
     resave: false,
     saveUninitialized: false,
