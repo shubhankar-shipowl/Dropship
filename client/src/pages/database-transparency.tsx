@@ -242,8 +242,47 @@ export default function DatabaseTransparency() {
     });
   };
 
-  const handleDownloadTemplate = () => {
-    window.open('/api/export-settings', '_blank');
+  const handleDownloadTemplate = async () => {
+    try {
+      console.log('Downloading settings template...');
+      
+      const response = await fetch('/api/export-settings', {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      const blob = await response.blob();
+      console.log('Template downloaded, blob size:', blob.size);
+      
+      // Create download link for cross-system compatibility
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'settings_template.xlsx';
+      a.style.display = 'none';
+      
+      // Append to body, click, and remove for PM2/cross-system compatibility
+      document.body.appendChild(a);
+      a.click();
+      
+      // Clean up
+      setTimeout(() => {
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+      }, 100);
+      
+      console.log('Template download initiated successfully');
+      
+    } catch (error) {
+      console.error('Error downloading template:', error);
+      alert(`Error downloading template: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
   };
 
   const handleSaveEdit = async () => {
@@ -256,19 +295,21 @@ export default function DatabaseTransparency() {
           dropshipperEmail: config.dropshipperEmail,
           productUid: config.productUid,
           productName: config.productName,
-          productWeight: parseFloat(formData.productWeight) || 0.5,
-          productCostPerUnit: parseFloat(formData.productCost) || 0
+          sku: config.sku || '',
+          productWeight: formData.productWeight || '0.5',
+          productCostPerUnit: formData.productCost || '0',
+          currency: 'INR'
         });
       }
 
       // Update shipping rate if changed
       if (formData.shippingRate) {
         await apiRequest('POST', '/api/shipping-rates', {
-          dropshipperEmail: config.dropshipperEmail,
           productUid: config.productUid,
-          productWeight: parseFloat(formData.productWeight) || 0.5,
+          productWeight: formData.productWeight || '0.5',
           shippingProvider: config.shippingProvider,
-          shippingRatePerKg: parseFloat(formData.shippingRate) || 0
+          shippingRatePerKg: formData.shippingRate || '0',
+          currency: 'INR'
         });
       }
 
@@ -342,11 +383,11 @@ export default function DatabaseTransparency() {
     return `₹${Math.round(parseFloat(amount?.toString() || '0'))}`;
   };
 
-  const orders = ordersQuery.data || [];
-  const uploads = uploadsQuery.data || [];
-  const productPrices = productPricesQuery.data || [];
-  const shippingRates = shippingRatesQuery.data || [];
-  const payoutLogs = payoutLogsQuery.data || [];
+  const orders = Array.isArray(ordersQuery.data) ? ordersQuery.data : [];
+  const uploads = Array.isArray(uploadsQuery.data) ? uploadsQuery.data : [];
+  const productPrices = Array.isArray(productPricesQuery.data) ? productPricesQuery.data : [];
+  const shippingRates = Array.isArray(shippingRatesQuery.data) ? shippingRatesQuery.data : [];
+  const payoutLogs = Array.isArray(payoutLogsQuery.data) ? payoutLogsQuery.data : [];
 
   console.log('Current orders count:', orders.length);
   console.log('Current uploads count:', uploads.length);

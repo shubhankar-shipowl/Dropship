@@ -83,18 +83,23 @@ export function registerSettingsRoutes(app: Express): void {
         const row = data[i];
         if (!row || row.length === 0) continue;
 
-        const priceData = {
+        const priceDataRaw = {
           dropshipperEmail: String(row[headerMapping['dropshipper email']] || '').trim(),
           productUid: String(row[headerMapping['product uid']] || '').trim(),
           productName: String(row[headerMapping['product name']] || '').trim(),
-          productCostPerUnit: String(parseFloat(String(row[headerMapping['product cost per unit']] || '0'))),
+          productCostPerUnit: String(row[headerMapping['product cost per unit']] || '0'),
           sku: null,
           productWeight: '0.5', // Default weight
           currency: 'INR'
         };
 
-        if (priceData.dropshipperEmail && priceData.productUid && priceData.productName) {
-          prices.push(priceData);
+        if (priceDataRaw.dropshipperEmail && priceDataRaw.productUid && priceDataRaw.productName) {
+          try {
+            const priceData = insertProductPriceSchema.parse(priceDataRaw);
+            prices.push(priceData);
+          } catch (e) {
+            console.warn('Invalid price data row, skipping:', priceDataRaw);
+          }
         }
       }
 
@@ -183,16 +188,21 @@ export function registerSettingsRoutes(app: Express): void {
         const row = data[i];
         if (!row || row.length === 0) continue;
 
-        const rateData = {
+        const rateDataRaw = {
           productUid: String(row[headerMapping['product uid']] || '').trim(),
-          productWeight: String(parseFloat(String(row[headerMapping['product weight']] || '0.5'))),
+          productWeight: String(row[headerMapping['product weight']] || '0.5'),
           shippingProvider: String(row[headerMapping['shipping provider']] || '').trim(),
-          shippingRatePerKg: String(parseFloat(String(row[headerMapping['shipping rate per kg']] || '0'))),
+          shippingRatePerKg: String(row[headerMapping['shipping rate per kg']] || '0'),
           currency: 'INR'
         };
 
-        if (rateData.productUid && rateData.shippingProvider) {
-          rates.push(rateData);
+        if (rateDataRaw.productUid && rateDataRaw.shippingProvider) {
+          try {
+            const rateData = insertShippingRateSchema.parse(rateDataRaw);
+            rates.push(rateData);
+          } catch (e) {
+            console.warn('Invalid rate data row, skipping:', rateDataRaw);
+          }
         }
       }
 
@@ -257,18 +267,23 @@ export function registerSettingsRoutes(app: Express): void {
                 const row = pricesData[i] || [];
                 if (!row || row.length === 0) continue;
 
-                const priceData = {
+                const priceDataRaw = {
                   dropshipperEmail: String(row[priceHeaderMapping['dropshipper email']] || '').trim(),
                   productUid: String(row[priceHeaderMapping['product uid']] || '').trim(),
                   productName: String(row[priceHeaderMapping['product name']] || '').trim(),
-                  productCostPerUnit: String(parseFloat(String(row[priceHeaderMapping['product cost per unit']] || '0'))),
+                  productCostPerUnit: String(row[priceHeaderMapping['product cost per unit']] || '0'),
                   sku: null,
                   productWeight: '0.5', // Default weight
                   currency: 'INR'
                 };
 
-                if (priceData.dropshipperEmail && priceData.productUid && priceData.productName) {
-                  prices.push(priceData);
+                if (priceDataRaw.dropshipperEmail && priceDataRaw.productUid && priceDataRaw.productName) {
+                  try {
+                    const priceData = insertProductPriceSchema.parse(priceDataRaw);
+                    prices.push(priceData);
+                  } catch (e) {
+                    console.warn('Invalid price data row, skipping:', priceDataRaw);
+                  }
                 }
               }
 
@@ -316,16 +331,21 @@ export function registerSettingsRoutes(app: Express): void {
                 const row = ratesData[i] || [];
                 if (!row || row.length === 0) continue;
 
-                const rateData = {
+                const rateDataRaw = {
                   productUid: String(row[rateHeaderMapping['product uid']] || '').trim(),
-                  productWeight: String(parseFloat(String(row[rateHeaderMapping['product weight']] || '0.5'))),
+                  productWeight: String(row[rateHeaderMapping['product weight']] || '0.5'),
                   shippingProvider: String(row[rateHeaderMapping['shipping provider']] || '').trim(),
-                  shippingRatePerKg: String(parseFloat(String(row[rateHeaderMapping['shipping rate per kg']] || '0'))),
+                  shippingRatePerKg: String(row[rateHeaderMapping['shipping rate per kg']] || '0'),
                   currency: 'INR'
                 };
 
-                if (rateData.productUid && rateData.shippingProvider) {
-                  rates.push(rateData);
+                if (rateDataRaw.productUid && rateDataRaw.shippingProvider) {
+                  try {
+                    const rateData = insertShippingRateSchema.parse(rateDataRaw);
+                    rates.push(rateData);
+                  } catch (e) {
+                    console.warn('Invalid rate data row, skipping:', rateDataRaw);
+                  }
                 }
               }
 
@@ -400,6 +420,270 @@ export function registerSettingsRoutes(app: Express): void {
     } catch (error) {
       console.error('Error creating shipping rates template:', error);
       res.status(500).json({ message: 'Error creating template' });
+    }
+  });
+
+  // Combined settings template for database transparency
+  app.get('/api/export-settings', async (req, res) => {
+    try {
+      console.log('Export settings template requested');
+      
+      const [productPrices, shippingRates, missingData] = await Promise.all([
+        storage.getProductPrices(),
+        storage.getShippingRates(),
+        storage.getMissingPricesAndRates(),
+      ]);
+
+      const workbook = XLSX.utils.book_new();
+
+      // Product Prices Sheet - Include both existing and missing
+      const existingPricesData = productPrices.map((price) => ({
+        'Dropshipper Email': price.dropshipperEmail,
+        'Product UID': price.productUid,
+        'Product Name': price.productName,
+        SKU: price.sku || '',
+        'Product Weight (kg)': price.productWeight || '0.5',
+        'Product Cost Per Unit': price.productCostPerUnit,
+        Currency: price.currency,
+      }));
+
+      const missingPricesData = missingData.missingPrices.map((missing) => ({
+        'Dropshipper Email': missing.dropshipperEmail,
+        'Product UID': missing.productUid,
+        'Product Name': missing.productName,
+        SKU: missing.sku || '',
+        'Product Weight (kg)': '', // Empty for user to fill
+        'Product Cost Per Unit': '', // Empty for user to fill
+        Currency: 'INR',
+      }));
+
+      // Add instructions for product prices
+      const pricesInstructionsData = [
+        {
+          'Dropshipper Email': 'INSTRUCTIONS:',
+          'Product UID': 'Fill weight in kg for each product',
+          'Product Name': 'System uses this for shipping rate',
+          SKU: 'Example: 0.5, 1, 1.5, 2',
+          'Product Weight (kg)': 'IMPORTANT!',
+          'Product Cost Per Unit': 'Cost in rupees',
+          Currency: 'Always INR',
+        },
+        {
+          'Dropshipper Email': 'EXAMPLE:',
+          'Product UID': 'PROD001',
+          'Product Name': 'Light Product',
+          SKU: 'LP001',
+          'Product Weight (kg)': '0.5',
+          'Product Cost Per Unit': '150',
+          Currency: 'INR',
+        },
+        {
+          'Dropshipper Email': 'EXAMPLE:',
+          'Product UID': 'PROD002',
+          'Product Name': 'Heavy Product',
+          SKU: 'HP001',
+          'Product Weight (kg)': '1',
+          'Product Cost Per Unit': '300',
+          Currency: 'INR',
+        },
+        {
+          'Dropshipper Email': '--- DELETE ABOVE ROWS BEFORE UPLOAD ---',
+          'Product UID': '',
+          'Product Name': '',
+          SKU: '',
+          'Product Weight (kg)': '',
+          'Product Cost Per Unit': '',
+          Currency: '',
+        },
+        ...existingPricesData,
+        ...missingPricesData,
+      ];
+
+      const pricesSheet = XLSX.utils.json_to_sheet(pricesInstructionsData);
+
+      // Set column widths for product prices sheet
+      pricesSheet['!cols'] = [
+        { wch: 35 }, // Dropshipper Email
+        { wch: 50 }, // Product UID
+        { wch: 30 }, // Product Name
+        { wch: 15 }, // SKU
+        { wch: 18 }, // Product Weight
+        { wch: 20 }, // Product Cost Per Unit
+        { wch: 10 }, // Currency
+      ];
+
+      XLSX.utils.book_append_sheet(workbook, pricesSheet, 'Product Prices');
+
+      // Shipping Rates Sheet - With Shipping UID for better organization
+      const existingRatesData = shippingRates.map((rate) => {
+        const shippingUid = `${rate.productUid}${rate.productWeight}kg${rate.shippingProvider}`;
+        return {
+          'Shipping UID': shippingUid,
+          'Product UID': rate.productUid,
+          'Product Weight (kg)': rate.productWeight,
+          'Shipping Provider': rate.shippingProvider,
+          'Shipping Rate Per Kg': rate.shippingRatePerKg,
+          Currency: rate.currency,
+        };
+      });
+
+      // Create examples for common weight-based shipping rates
+      const commonWeights = ['0.5', '1', '1.5', '2', '3', '5'];
+      const missingRatesData: any[] = [];
+
+      // Add existing missing rates - Extract components from rate key
+      missingData.missingRates.forEach((rateKey) => {
+        // Parse the rateKey to extract components
+        // Format: productUid + productWeight + kg + shippingProvider
+
+        // Find product weight pattern (number followed by 'kg')
+        const weightMatch = rateKey.match(/(\d+(?:\.\d+)?)kg/);
+        let productWeight = '0.5';
+        let productUid = '';
+        let shippingProvider = '';
+
+        if (weightMatch) {
+          productWeight = weightMatch[1];
+          const weightPattern = weightMatch[0]; // e.g., "0.5kg"
+          const beforeWeight = rateKey.substring(
+            0,
+            rateKey.indexOf(weightPattern),
+          );
+          const afterWeight = rateKey.substring(
+            rateKey.indexOf(weightPattern) + weightPattern.length,
+          );
+
+          productUid = beforeWeight;
+          shippingProvider = afterWeight;
+        } else {
+          // Fallback if pattern doesn't match
+          productUid = rateKey;
+        }
+
+        missingRatesData.push({
+          'Shipping UID': rateKey,
+          'Product UID': productUid,
+          'Product Weight (kg)': productWeight,
+          'Shipping Provider': shippingProvider,
+          'Shipping Rate Per Kg': '', // Empty for user to fill
+          Currency: 'INR',
+        });
+      });
+
+      // Add example rows for common weights to make it easier
+      const allDropshippers = Array.from(
+        new Set([
+          ...productPrices.map((p) => p.dropshipperEmail),
+          ...missingData.missingPrices.map((m) => m.dropshipperEmail),
+        ]),
+      );
+      const allProviders = Array.from(
+        new Set([...shippingRates.map((r) => r.shippingProvider)]),
+      );
+
+      if (allDropshippers.length > 0 && allProviders.length > 0) {
+        // Add weight examples for easier configuration
+        allDropshippers.slice(0, 2).forEach((email) => {
+          // Only first 2 dropshippers to avoid too many rows
+          allProviders.slice(0, 2).forEach((provider) => {
+            // Only first 2 providers
+            commonWeights.slice(0, 3).forEach((weight) => {
+              // Only first 3 weights
+              // Only add if not already present
+              const shippingUid = `${email}${weight}kg${provider}`;
+              const exists = missingRatesData.some(
+                (item) => item['Shipping UID'] === shippingUid,
+              );
+              if (!exists) {
+                missingRatesData.push({
+                  'Shipping UID': shippingUid,
+                  'Product UID': email,
+                  'Product Weight (kg)': weight,
+                  'Shipping Provider': provider,
+                  'Shipping Rate Per Kg':
+                    weight === '0.5' ? '25' : weight === '1' ? '20' : '', // Example rates
+                  Currency: 'INR',
+                });
+              }
+            });
+          });
+        });
+      }
+
+      const allRatesData = [...existingRatesData, ...missingRatesData];
+
+      // Add instructions at the top for shipping rates
+      const instructionsData = [
+        {
+          'Shipping UID': 'INSTRUCTIONS: Unique ID for each rate combination',
+          'Product UID': 'Set rates per product UID for different weights',
+          'Product Weight (kg)': 'Examples: 0.5, 1, 1.5, 2',
+          'Shipping Provider': 'BlueDart, Delhivery, Ekart, etc',
+          'Shipping Rate Per Kg': 'Rate in rupees per kg',
+          Currency: 'Always INR',
+        },
+        {
+          'Shipping UID':
+            'EXAMPLE: siddkumar213@gmail.comHerbal Brews - Pain Relief Patches - Pack of 200.5kgBlueDart Express',
+          'Product UID':
+            'siddkumar213@gmail.comHerbal Brews - Pain Relief Patches - Pack of 20',
+          'Product Weight (kg)': '0.5',
+          'Shipping Provider': 'BlueDart Express',
+          'Shipping Rate Per Kg': '85',
+          Currency: 'INR',
+        },
+        {
+          'Shipping UID':
+            'EXAMPLE: siddkumar213@gmail.comHerbal Brews - Pain Relief Patches - Pack of 200.5kgDelhivery',
+          'Product UID':
+            'siddkumar213@gmail.comHerbal Brews - Pain Relief Patches - Pack of 20',
+          'Product Weight (kg)': '0.5',
+          'Shipping Provider': 'Delhivery',
+          'Shipping Rate Per Kg': '75',
+          Currency: 'INR',
+        },
+        {
+          'Shipping UID': '--- DELETE ABOVE ROWS BEFORE UPLOAD ---',
+          'Product UID': '--- DELETE ABOVE ROWS BEFORE UPLOAD ---',
+          'Product Weight (kg)': '',
+          'Shipping Provider': '',
+          'Shipping Rate Per Kg': '',
+          Currency: '',
+        },
+        ...allRatesData,
+      ];
+
+      const ratesSheet = XLSX.utils.json_to_sheet(instructionsData);
+
+      // Set column widths to prevent text overflow
+      ratesSheet['!cols'] = [
+        { wch: 40 }, // Shipping UID
+        { wch: 50 }, // Product UID
+        { wch: 18 }, // Product Weight
+        { wch: 25 }, // Shipping Provider
+        { wch: 20 }, // Shipping Rate Per Kg
+        { wch: 10 }, // Currency
+      ];
+
+      XLSX.utils.book_append_sheet(workbook, ratesSheet, 'Shipping Rates');
+
+      // Generate buffer
+      const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+
+      // Set headers for cross-system compatibility
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', 'attachment; filename=settings_template.xlsx');
+      res.setHeader('Content-Length', buffer.length);
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+      
+      console.log('Sending settings template file with real data, size:', buffer.length);
+      res.send(buffer);
+      
+    } catch (error) {
+      console.error('Error creating settings template:', error);
+      res.status(500).json({ message: 'Error creating template', error: error instanceof Error ? error.message : 'Unknown error' });
     }
   });
 }

@@ -116,11 +116,29 @@ export const insertOrderDataSchema = createInsertSchema(orderData).omit({
 export const insertProductPriceSchema = createInsertSchema(productPrices).omit({
   id: true,
   updatedAt: true,
+}).extend({
+  productWeight: z.union([z.string(), z.number()]).transform((val) => {
+    const num = typeof val === 'string' ? parseFloat(val) : val;
+    return isNaN(num) ? null : num;
+  }).nullable(),
+  productCostPerUnit: z.union([z.string(), z.number()]).transform((val) => {
+    const num = typeof val === 'string' ? parseFloat(val) : val;
+    return isNaN(num) ? 0 : num;
+  }),
 });
 
 export const insertShippingRateSchema = createInsertSchema(shippingRates).omit({
   id: true,
   updatedAt: true,
+}).extend({
+  productWeight: z.union([z.string(), z.number()]).transform((val) => {
+    const num = typeof val === 'string' ? parseFloat(val) : val;
+    return isNaN(num) ? 0.5 : num;
+  }),
+  shippingRatePerKg: z.union([z.string(), z.number()]).transform((val) => {
+    const num = typeof val === 'string' ? parseFloat(val) : val;
+    return isNaN(num) ? 0 : num;
+  }),
 });
 
 export const insertPayoutLogSchema = createInsertSchema(payoutLog).omit({
