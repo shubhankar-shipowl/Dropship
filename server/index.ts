@@ -158,16 +158,45 @@ app.use((req, res, next) => {
   // ALWAYS serve the app on the port specified in the environment variable PORT
   // For Plesk: Default to 3000 if not specified, as Plesk typically expects this
   // For development: Use 5000 for local development compatibility
-  const port = parseInt(
+  const preferredPort = parseInt(
     process.env.PORT ||
       (process.env.NODE_ENV === 'production' ? '3000' : '5000'),
     10,
   );
-  server.listen(
-    port,
-    '0.0.0.0',
-    () => {
-      log(`serving on port ${port}`);
-    },
-  );
+  
+  // Try to start on preferred port, with fallback to alternate ports
+  const fallbackPorts = [5001, 5050, 3001, 3000];
+  let fallbackIndex = 0;
+  
+  const tryListen = (port: number, isFallback = false) => {
+    server.listen(
+      port,
+      '0.0.0.0',
+      () => {
+        if (isFallback) {
+          log(`Port ${preferredPort} was in use, serving on port ${port} instead`);
+          log(`To use port ${preferredPort}, disable AirPlay Receiver in System Settings > General > AirDrop & Handoff`);
+        } else {
+          log(`serving on port ${port}`);
+        }
+      },
+    ).on('error', (err: NodeJS.ErrnoException) => {
+      if (err.code === 'EADDRINUSE') {
+        if (fallbackIndex < fallbackPorts.length) {
+          // Try next fallback port
+          const nextPort = fallbackPorts[fallbackIndex++];
+          log(`Port ${port} is in use, trying port ${nextPort}...`);
+          tryListen(nextPort, true);
+        } else {
+          log(`All ports tried are in use. Please free a port or change PORT in .env`);
+          log(`On macOS, disable AirPlay Receiver in System Settings > General > AirDrop & Handoff`);
+          process.exit(1);
+        }
+      } else {
+        throw err;
+      }
+    });
+  };
+  
+  tryListen(preferredPort);
 })();

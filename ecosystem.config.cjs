@@ -14,13 +14,13 @@ module.exports = {
       // Environment Variables
       env: {
         NODE_ENV: 'production',
-        PORT: 5000,
+        PORT: 3006,
         // Ensure Node.js can handle large file uploads
         NODE_OPTIONS: '--max-old-space-size=2048'
       },
       env_production: {
         NODE_ENV: 'production',
-        PORT: 5000,
+        PORT: 3006,
         NODE_OPTIONS: '--max-old-space-size=2048'
       },
       
