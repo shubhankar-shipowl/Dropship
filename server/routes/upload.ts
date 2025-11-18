@@ -202,12 +202,23 @@ export function registerUploadRoutes(app: Express): void {
       const manualMapping = req.body.columnMapping ? JSON.parse(req.body.columnMapping) : null;
       let data: any[][] = [];
 
-      // Parse file based on type
+      // Parse file based on type - optimized for large files
       if (mimetype.includes('excel') || originalname.endsWith('.xlsx') || originalname.endsWith('.xls')) {
-        const workbook = XLSX.read(buffer, { type: 'buffer' });
+        // Use optimized parsing options for better performance
+        const workbook = XLSX.read(buffer, { 
+          type: 'buffer',
+          cellDates: false, // Disable date parsing for speed
+          cellNF: false, // Disable number format parsing
+          cellText: false, // Disable text formatting
+          dense: false // Use sparse mode for memory efficiency
+        });
         const sheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[sheetName];
-        data = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+        data = XLSX.utils.sheet_to_json(worksheet, { 
+          header: 1,
+          defval: '', // Default value for empty cells
+          raw: false // Convert all values to strings for consistency
+        });
       } else if (mimetype.includes('csv') || originalname.endsWith('.csv')) {
         const csvData: any[] = [];
         const stream = Readable.from(buffer.toString());
@@ -269,13 +280,17 @@ export function registerUploadRoutes(app: Express): void {
 
       console.log(`Processing ${data.length - 1} rows from Excel file...`);
       
-      // Process in large chunks for optimization
-      const processChunkSize = 25000;
+      // Process in optimized chunks - smaller chunks for better memory management
+      const processChunkSize = 5000; // Reduced from 25000 for better memory efficiency
       let processedCount = 0;
       
       for (let chunkStart = 1; chunkStart < data.length; chunkStart += processChunkSize) {
         const chunkEnd = Math.min(chunkStart + processChunkSize, data.length);
-        console.log(`Processing chunk ${Math.floor(chunkStart/processChunkSize) + 1}/${Math.ceil((data.length-1)/processChunkSize)}: rows ${chunkStart} to ${chunkEnd-1}`);
+        
+        // Log progress less frequently to reduce overhead
+        if (chunkStart === 1 || chunkStart % (processChunkSize * 5) === 1) {
+          console.log(`Processing rows ${chunkStart} to ${chunkEnd-1} of ${data.length - 1} (${Math.round(((chunkStart - 1) / (data.length - 1)) * 100)}%)`);
+        }
         
         for (let i = chunkStart; i < chunkEnd; i++) {
           const row = data[i];
@@ -355,18 +370,16 @@ export function registerUploadRoutes(app: Express): void {
           }
         }
         
-        // Insert batch frequently for performance
-        if (orders.length >= 1000) {
-          console.log(`Inserting intermediate batch of ${orders.length} orders...`);
-          
+        // Insert batch more frequently for better performance and memory management
+        if (orders.length >= 2000) {
           const batchToInsert = [...orders];
           orders.length = 0;
           
           const insertPromise = storage.insertOrderData(batchToInsert);
           insertPromises.push(insertPromise);
           
-          // Limit concurrent insertions
-          if (insertPromises.length >= 3) {
+          // Allow more concurrent insertions for better throughput
+          if (insertPromises.length >= 5) {
             await Promise.all(insertPromises);
             insertPromises.length = 0;
           }
@@ -375,13 +388,11 @@ export function registerUploadRoutes(app: Express): void {
 
       // Wait for any pending insertions
       if (insertPromises.length > 0) {
-        console.log(`Waiting for ${insertPromises.length} parallel insertions to complete...`);
         await Promise.all(insertPromises);
       }
       
       // Insert remaining order data
       if (orders.length > 0) {
-        console.log(`Inserting final batch of ${orders.length} orders...`);
         await storage.insertOrderData(orders);
       }
       
