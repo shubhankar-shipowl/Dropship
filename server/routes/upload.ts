@@ -203,6 +203,24 @@ export function registerUploadRoutes(app: Express): void {
       res.setHeader('Keep-Alive', 'timeout=1800');
     }
     
+    // Ensure response is always sent, even on unexpected errors
+    let responseSent = false;
+    const sendResponse = (status: number, data: any) => {
+      if (!responseSent && !res.headersSent) {
+        responseSent = true;
+        res.status(status).json(data);
+      } else if (!responseSent) {
+        // Headers sent but response not completed
+        try {
+          res.write(JSON.stringify(data));
+          res.end();
+          responseSent = true;
+        } catch (e) {
+          console.error('Failed to send response:', e);
+        }
+      }
+    };
+    
     try {
       if (!req.file) {
         return res.status(400).json({ message: 'No file uploaded' });
@@ -281,12 +299,25 @@ export function registerUploadRoutes(app: Express): void {
       let insertPromises: Promise<void>[] = [];
 
       // Create upload session
-      const uploadSession = await storage.createUploadSession({
-        filename: originalname,
-        totalRows: data.length - 1,
-        processedRows: 0,
-        cancelledRows: 0
-      });
+      let uploadSession;
+      try {
+        uploadSession = await storage.createUploadSession({
+          filename: originalname,
+          totalRows: data.length - 1,
+          processedRows: 0,
+          cancelledRows: 0
+        });
+        console.log(`Created upload session: ${uploadSession.id} for ${data.length - 1} rows`);
+      } catch (sessionError) {
+        console.error('Failed to create upload session:', sessionError);
+        if (!res.headersSent) {
+          return res.status(500).json({ 
+            message: 'Failed to initialize upload session',
+            error: sessionError instanceof Error ? sessionError.message : 'Unknown error'
+          });
+        }
+        throw sessionError;
+      }
 
       console.log(`Processing ${data.length - 1} rows from Excel file...`);
       
@@ -396,25 +427,40 @@ export function registerUploadRoutes(app: Express): void {
         }
       }
 
-      // Wait for any pending insertions
+      // Wait for any pending insertions with error handling
       if (insertPromises.length > 0) {
-        await Promise.all(insertPromises);
+        try {
+          await Promise.all(insertPromises);
+        } catch (insertError) {
+          console.error('Error in parallel insertions:', insertError);
+          // Continue processing - some data may have been inserted
+        }
       }
       
       // Insert remaining order data
       if (orders.length > 0) {
-        await storage.insertOrderData(orders);
+        try {
+          await storage.insertOrderData(orders);
+        } catch (finalInsertError) {
+          console.error('Error inserting final batch:', finalInsertError);
+          // Continue - update session with what was processed
+        }
       }
       
       console.log(`Total processed: ${processedCount} orders, cancelled: ${cancelledCount}`);
 
       // Update upload session with final counts
-      await storage.updateUploadSession(uploadSession.id, {
-        processedRows: processedCount,
-        cancelledRows: cancelledCount
-      });
+      try {
+        await storage.updateUploadSession(uploadSession.id, {
+          processedRows: processedCount,
+          cancelledRows: cancelledCount
+        });
+      } catch (updateError) {
+        console.error('Error updating upload session:', updateError);
+        // Continue - session update failure shouldn't block response
+      }
 
-      res.json({
+      sendResponse(200, {
         uploadSessionId: uploadSession.id,
         totalRows: data.length - 1,
         processedRows: processedCount,
@@ -425,14 +471,30 @@ export function registerUploadRoutes(app: Express): void {
     } catch (error) {
       console.error('Upload error:', error);
       console.error('Error stack:', error instanceof Error ? error.stack : 'No stack trace');
+      console.error('Error details:', {
+        name: error instanceof Error ? error.name : 'Unknown',
+        message: error instanceof Error ? error.message : String(error),
+        code: (error as any)?.code,
+        errno: (error as any)?.errno,
+      });
       
-      // Send error response
-      if (!res.headersSent) {
-        res.status(500).json({ 
-          message: 'Error processing file',
-          error: error instanceof Error ? error.message : 'Unknown error'
-        });
-      }
+      // Send error response with detailed information
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const isTimeout = errorMessage.includes('timeout') || errorMessage.includes('ETIMEDOUT') || (error as any)?.code === 'ETIMEDOUT';
+      const isConnection = errorMessage.includes('ECONNREFUSED') || errorMessage.includes('ENOTFOUND') || 
+                          errorMessage.includes('ECONNRESET') || (error as any)?.code === 'ECONNREFUSED';
+      const isDatabase = errorMessage.includes('database') || errorMessage.includes('MySQL') || 
+                        errorMessage.includes('connection') || errorMessage.includes('pool');
+      
+      sendResponse(500, { 
+        message: isTimeout 
+          ? 'Upload timeout - file processing took too long. Please try with a smaller file or contact support.'
+          : isConnection || isDatabase
+          ? 'Database connection error - please try again later or contact support.'
+          : 'Error processing file - please try again or contact support if the issue persists.',
+        error: errorMessage,
+        errorType: isTimeout ? 'timeout' : isConnection || isDatabase ? 'connection' : 'processing'
+      });
     }
   });
 

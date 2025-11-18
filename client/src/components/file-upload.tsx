@@ -161,8 +161,9 @@ export default function FileUpload({ onUploadSuccess }: FileUploadProps) {
       formData.append('columnMapping', JSON.stringify(mapping));
 
       // Enhanced fetch with timeout and retry logic for cross-device uploads
+      // Increased timeout to 35 minutes to match server timeout (30 min) + buffer
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10 * 60 * 1000); // 10 minute timeout
+      const timeoutId = setTimeout(() => controller.abort(), 35 * 60 * 1000); // 35 minute timeout
 
       const uploadWithRetry = async (attemptNumber: number = 1): Promise<Response> => {
         try {
