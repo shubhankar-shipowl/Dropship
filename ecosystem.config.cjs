@@ -55,9 +55,10 @@ module.exports = {
       ],
       
       // Advanced Process Settings
-      kill_timeout: 10000, // More time for graceful shutdown
+      kill_timeout: 30000, // 30 seconds for graceful shutdown
       listen_timeout: 10000, // More time for app to start listening
       wait_ready: true, // Wait for ready signal
+      shutdown_with_message: true, // Graceful shutdown
       
       // File Upload Optimizations
       source_map_support: false, // Disable for better performance

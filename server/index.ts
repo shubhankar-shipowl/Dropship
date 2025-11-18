@@ -89,8 +89,13 @@ app.use((req, res, next) => {
     req.path.includes('/api/upload') ||
     req.path.includes('/api/preview-file')
   ) {
-    req.setTimeout(10 * 60 * 1000); // 10 minutes for file uploads
-    res.setTimeout(10 * 60 * 1000);
+    // Extended timeout for large file processing (30 minutes)
+    req.setTimeout(30 * 60 * 1000); // 30 minutes for file uploads
+    res.setTimeout(30 * 60 * 1000);
+    
+    // Keep connection alive with headers
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('Keep-Alive', 'timeout=1800'); // 30 minutes
   } else {
     req.setTimeout(2 * 60 * 1000); // 2 minutes for regular requests
     res.setTimeout(2 * 60 * 1000);

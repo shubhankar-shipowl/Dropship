@@ -193,6 +193,12 @@ export function registerUploadRoutes(app: Express): void {
 
   // File upload and processing with manual mapping - Enhanced for PM2 and cross-device
   app.post('/api/upload', upload.single('file'), handleUploadError, async (req, res) => {
+    // Set extended timeout and keep-alive for large file processing
+    req.setTimeout(30 * 60 * 1000); // 30 minutes
+    res.setTimeout(30 * 60 * 1000);
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('Keep-Alive', 'timeout=1800');
+    
     try {
       if (!req.file) {
         return res.status(400).json({ message: 'No file uploaded' });
@@ -414,7 +420,15 @@ export function registerUploadRoutes(app: Express): void {
 
     } catch (error) {
       console.error('Upload error:', error);
-      res.status(500).json({ message: 'Error processing file' });
+      console.error('Error stack:', error instanceof Error ? error.stack : 'No stack trace');
+      
+      // Send error response
+      if (!res.headersSent) {
+        res.status(500).json({ 
+          message: 'Error processing file',
+          error: error instanceof Error ? error.message : 'Unknown error'
+        });
+      }
     }
   });
 
