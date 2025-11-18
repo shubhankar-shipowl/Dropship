@@ -201,7 +201,14 @@ export function registerUploadRoutes(app: Express): void {
     if (!res.headersSent) {
       res.setHeader('Connection', 'keep-alive');
       res.setHeader('Keep-Alive', 'timeout=1800');
+      // Disable compression for upload endpoint to avoid buffering delays
+      res.setHeader('Content-Encoding', 'identity');
     }
+    
+    // Log upload start for VPS debugging
+    const uploadStartTime = Date.now();
+    const clientIP = req.ip || req.socket.remoteAddress || 'unknown';
+    console.log(`[UPLOAD START] File upload started from ${clientIP} at ${new Date().toISOString()}`);
     
     // Ensure response is always sent, even on unexpected errors
     let responseSent = false;
@@ -319,18 +326,25 @@ export function registerUploadRoutes(app: Express): void {
         throw sessionError;
       }
 
-      console.log(`Processing ${data.length - 1} rows from Excel file...`);
+      const totalRows = data.length - 1;
+      const fileSizeMB = (buffer.length / (1024 * 1024)).toFixed(2);
+      console.log(`[UPLOAD PROCESSING] File: ${originalname} (${fileSizeMB}MB), Rows: ${totalRows} from ${clientIP}`);
       
       // Process in optimized chunks - smaller chunks for better memory management
       const processChunkSize = 5000; // Reduced from 25000 for better memory efficiency
       let processedCount = 0;
+      let lastProgressLog = uploadStartTime;
       
       for (let chunkStart = 1; chunkStart < data.length; chunkStart += processChunkSize) {
         const chunkEnd = Math.min(chunkStart + processChunkSize, data.length);
         
-        // Log progress less frequently to reduce overhead
-        if (chunkStart === 1 || chunkStart % (processChunkSize * 5) === 1) {
-          console.log(`Processing rows ${chunkStart} to ${chunkEnd-1} of ${data.length - 1} (${Math.round(((chunkStart - 1) / (data.length - 1)) * 100)}%)`);
+        // Log progress periodically to keep connection alive and track VPS performance
+        const now = Date.now();
+        if (chunkStart === 1 || now - lastProgressLog > 30000) { // Log every 30 seconds
+          const progress = Math.round(((chunkStart - 1) / totalRows) * 100);
+          const elapsed = ((now - uploadStartTime) / 1000).toFixed(1);
+          console.log(`[UPLOAD PROGRESS] ${progress}% (${chunkStart-1}/${totalRows} rows) in ${elapsed}s from ${clientIP}`);
+          lastProgressLog = now;
         }
         
         for (let i = chunkStart; i < chunkEnd; i++) {
@@ -460,22 +474,29 @@ export function registerUploadRoutes(app: Express): void {
         // Continue - session update failure shouldn't block response
       }
 
+      const uploadDuration = ((Date.now() - uploadStartTime) / 1000).toFixed(2);
+      console.log(`[UPLOAD SUCCESS] Completed in ${uploadDuration}s - ${processedCount} rows processed from ${clientIP}`);
+      
       sendResponse(200, {
         uploadSessionId: uploadSession.id,
         totalRows: data.length - 1,
         processedRows: processedCount,
         cancelledRows: cancelledCount,
-        message: `Successfully processed ${processedCount} orders from Excel (${cancelledCount} cancelled orders included)`
+        message: `Successfully processed ${processedCount} orders from Excel (${cancelledCount} cancelled orders included)`,
+        duration: uploadDuration
       });
 
     } catch (error) {
-      console.error('Upload error:', error);
+      const uploadDuration = ((Date.now() - uploadStartTime) / 1000).toFixed(2);
+      console.error(`[UPLOAD ERROR] Failed after ${uploadDuration}s from ${clientIP}:`, error);
       console.error('Error stack:', error instanceof Error ? error.stack : 'No stack trace');
       console.error('Error details:', {
         name: error instanceof Error ? error.name : 'Unknown',
         message: error instanceof Error ? error.message : String(error),
         code: (error as any)?.code,
         errno: (error as any)?.errno,
+        clientIP,
+        uploadDuration: `${uploadDuration}s`
       });
       
       // Send error response with detailed information
