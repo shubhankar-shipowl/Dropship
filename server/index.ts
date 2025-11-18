@@ -1,7 +1,8 @@
 import 'dotenv/config';
 import express, { type Request, Response, NextFunction } from 'express';
 import session from 'express-session';
-import connectPgSimple from 'connect-pg-simple';
+import { MySQLSessionStore } from './mysql-session-store';
+import { pool } from './db';
 import { registerRoutes } from './routes';
 import { setupVite, serveStatic, log } from './vite';
 import path from 'path';
@@ -38,17 +39,13 @@ app.use((req, res, next) => {
   next();
 });
 
-// Session configuration for cross-device persistence with PostgreSQL store
-const PgSession = connectPgSimple(session);
+// Session configuration for cross-device persistence with MySQL store
+// Use custom MySQL session store that works with ES modules
+const sessionStore = new MySQLSessionStore(pool, 'user_sessions');
 
 app.use(
   session({
-    store: new PgSession({
-      conString: process.env.DATABASE_URL || process.env.DB_URL,
-      tableName: 'user_sessions', // Optional custom table name
-      createTableIfMissing: true,
-      pruneSessionInterval: 60 * 15, // Prune expired sessions every 15 minutes
-    }),
+    store: sessionStore,
     secret: process.env.SESSION_SECRET || 'fallback-secret-key-for-development',
     resave: false,
     saveUninitialized: false,
