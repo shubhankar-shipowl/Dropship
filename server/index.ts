@@ -92,7 +92,7 @@ app.use((req, res, next) => {
     // Extended timeout for large file processing (30 minutes)
     req.setTimeout(30 * 60 * 1000); // 30 minutes for file uploads
     res.setTimeout(30 * 60 * 1000);
-    
+
     // Keep connection alive with headers (only if headers not sent)
     if (!res.headersSent) {
       res.setHeader('Connection', 'keep-alive');
@@ -163,40 +163,49 @@ app.use((req, res, next) => {
       (process.env.NODE_ENV === 'production' ? '3000' : '5000'),
     10,
   );
-  
+
   // Try to start on preferred port, with fallback to alternate ports
   const fallbackPorts = [5001, 5050, 3001, 3000];
   let fallbackIndex = 0;
-  
+
   const tryListen = (port: number, isFallback = false) => {
-    server.listen(
-      port,
-      '0.0.0.0',
-      () => {
+    server
+      .listen(port, '0.0.0.0', () => {
+        const accessUrl = `http://localhost:${port}`;
         if (isFallback) {
-          log(`Port ${preferredPort} was in use, serving on port ${port} instead`);
-          log(`To use port ${preferredPort}, disable AirPlay Receiver in System Settings > General > AirDrop & Handoff`);
+          log(
+            `Port ${preferredPort} was in use, serving on port ${port} instead`,
+          );
+          log(
+            `To use port ${preferredPort}, disable AirPlay Receiver in System Settings > General > AirDrop & Handoff`,
+          );
+          log(`🌐 Access URL: ${accessUrl}`);
         } else {
           log(`serving on port ${port}`);
+          log(`🌐 Access URL: ${accessUrl}`);
         }
-      },
-    ).on('error', (err: NodeJS.ErrnoException) => {
-      if (err.code === 'EADDRINUSE') {
-        if (fallbackIndex < fallbackPorts.length) {
-          // Try next fallback port
-          const nextPort = fallbackPorts[fallbackIndex++];
-          log(`Port ${port} is in use, trying port ${nextPort}...`);
-          tryListen(nextPort, true);
+      })
+      .on('error', (err: NodeJS.ErrnoException) => {
+        if (err.code === 'EADDRINUSE') {
+          if (fallbackIndex < fallbackPorts.length) {
+            // Try next fallback port
+            const nextPort = fallbackPorts[fallbackIndex++];
+            log(`Port ${port} is in use, trying port ${nextPort}...`);
+            tryListen(nextPort, true);
+          } else {
+            log(
+              `All ports tried are in use. Please free a port or change PORT in .env`,
+            );
+            log(
+              `On macOS, disable AirPlay Receiver in System Settings > General > AirDrop & Handoff`,
+            );
+            process.exit(1);
+          }
         } else {
-          log(`All ports tried are in use. Please free a port or change PORT in .env`);
-          log(`On macOS, disable AirPlay Receiver in System Settings > General > AirDrop & Handoff`);
-          process.exit(1);
+          throw err;
         }
-      } else {
-        throw err;
-      }
-    });
+      });
   };
-  
+
   tryListen(preferredPort);
 })();
