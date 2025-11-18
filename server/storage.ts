@@ -42,6 +42,7 @@ import {
   isNotNull,
   not,
 } from 'drizzle-orm';
+import { randomUUID } from 'crypto';
 
 export interface IStorage {
   // Upload Sessions
@@ -201,11 +202,15 @@ export class DatabaseStorage implements IStorage {
   async createUploadSession(
     session: InsertUploadSession,
   ): Promise<UploadSession> {
-    // Let the database generate the ID automatically
-    const [result] = await db
+    // Generate UUID and insert, then query back
+    const id = randomUUID();
+    await db
       .insert(uploadSessions)
-      .values(session)
-      .returning();
+      .values({ ...session, id } as any);
+    const [result] = await db
+      .select()
+      .from(uploadSessions)
+      .where(eq(uploadSessions.id, id));
     return result;
   }
 
@@ -221,11 +226,15 @@ export class DatabaseStorage implements IStorage {
     id: string,
     updates: Partial<InsertUploadSession>,
   ): Promise<UploadSession> {
-    const [result] = await db
+    await db
       .update(uploadSessions)
       .set(updates)
-      .where(eq(uploadSessions.id, id))
-      .returning();
+      .where(eq(uploadSessions.id, id));
+    const [result] = await db
+      .select()
+      .from(uploadSessions)
+      .where(eq(uploadSessions.id, id));
+    if (!result) throw new Error('Upload session not found after update');
     return result;
   }
 
@@ -243,12 +252,15 @@ export class DatabaseStorage implements IStorage {
     let totalFailed = 0;
 
     for (let i = 0; i < orders.length; i += batchSize) {
-      const batch = orders.slice(i, i + batchSize);
+      const batch = orders.slice(i, i + batchSize).map(order => ({
+        ...order,
+        id: randomUUID()
+      }));
 
       try {
         // Insert without conflict handling since table only has ID primary key
         // This means duplicates are allowed by design
-        await db.insert(orderData).values(batch);
+        await db.insert(orderData).values(batch as any);
 
         totalInserted += batch.length;
 
@@ -275,7 +287,7 @@ export class DatabaseStorage implements IStorage {
         );
         for (let j = 0; j < batch.length; j++) {
           try {
-            await db.insert(orderData).values([batch[j]]);
+            await db.insert(orderData).values([{ ...batch[j], id: randomUUID() } as any]);
             totalInserted++;
           } catch (individualError) {
             console.error(
@@ -344,14 +356,24 @@ export class DatabaseStorage implements IStorage {
     );
 
     if (existing) {
-      const [result] = await db
+      await db
         .update(productPrices)
         .set({ ...price, updatedAt: new Date() })
-        .where(eq(productPrices.id, existing.id))
-        .returning();
+        .where(eq(productPrices.id, existing.id));
+      const [result] = await db
+        .select()
+        .from(productPrices)
+        .where(eq(productPrices.id, existing.id));
+      if (!result) throw new Error('Product price not found after update');
       return result;
     } else {
-      const [result] = await db.insert(productPrices).values(price).returning();
+      const id = randomUUID();
+      await db.insert(productPrices).values({ ...price, id } as any);
+      const [result] = await db
+        .select()
+        .from(productPrices)
+        .where(eq(productPrices.id, id));
+      if (!result) throw new Error('Product price not found after insert');
       return result;
     }
   }
@@ -403,14 +425,24 @@ export class DatabaseStorage implements IStorage {
     );
 
     if (existing) {
-      const [result] = await db
+      await db
         .update(shippingRates)
         .set({ ...rate, updatedAt: new Date() })
-        .where(eq(shippingRates.id, existing.id))
-        .returning();
+        .where(eq(shippingRates.id, existing.id));
+      const [result] = await db
+        .select()
+        .from(shippingRates)
+        .where(eq(shippingRates.id, existing.id));
+      if (!result) throw new Error('Shipping rate not found after update');
       return result;
     } else {
-      const [result] = await db.insert(shippingRates).values(rate).returning();
+      const id = randomUUID();
+      await db.insert(shippingRates).values({ ...rate, id } as any);
+      const [result] = await db
+        .select()
+        .from(shippingRates)
+        .where(eq(shippingRates.id, id));
+      if (!result) throw new Error('Shipping rate not found after insert');
       return result;
     }
   }
@@ -449,7 +481,13 @@ export class DatabaseStorage implements IStorage {
   }
 
   async insertPayoutLog(log: InsertPayoutLog): Promise<PayoutLog> {
-    const [result] = await db.insert(payoutLog).values(log).returning();
+    const id = randomUUID();
+    await db.insert(payoutLog).values({ ...log, id } as any);
+    const [result] = await db
+      .select()
+      .from(payoutLog)
+      .where(eq(payoutLog.id, id));
+    if (!result) throw new Error('Payout log not found after insert');
     return result;
   }
 
@@ -611,7 +649,10 @@ export class DatabaseStorage implements IStorage {
     );
 
     if (dropshipperEmail) {
-      conditions.push(eq(orderData.dropshipperEmail, dropshipperEmail));
+      // Use case-insensitive comparison to match the exclusion filter pattern
+      conditions.push(
+        sql`lower(${orderData.dropshipperEmail}) = lower(${dropshipperEmail})`,
+      );
     }
 
     if (conditions.length > 0) {
@@ -619,10 +660,16 @@ export class DatabaseStorage implements IStorage {
     }
 
     const orders = await query;
+    console.log(`📊 Filtered orders count: ${orders.length} for dropshipper: ${dropshipperEmail || 'all'}`);
 
-    // Get price and rate mappings
-    const prices = await this.getProductPrices();
-    const rates = await this.getShippingRates();
+    // Get price and rate mappings - filter by dropshipper email if provided
+    let prices = await this.getProductPrices();
+    let rates = await this.getShippingRates();
+    
+    if (dropshipperEmail) {
+      prices = prices.filter(p => p.dropshipperEmail.toLowerCase() === dropshipperEmail.toLowerCase());
+      console.log(`📊 Filtered prices count: ${prices.length} for dropshipper: ${dropshipperEmail}`);
+    }
 
     const priceMap = new Map<string, number>();
     prices.forEach((p) => {
@@ -2386,10 +2433,16 @@ export class DatabaseStorage implements IStorage {
     data: InsertRtsRtoReconciliation,
   ): Promise<RtsRtoReconciliation> {
     try {
-      const [result] = await db
+      const id = randomUUID();
+      await db
         .insert(rtsRtoReconciliation)
-        .values(data)
-        .returning();
+        .values({ ...data, id } as any);
+      const [result] = await db
+        .select()
+        .from(rtsRtoReconciliation)
+        .where(eq(rtsRtoReconciliation.id, id));
+      
+      if (!result) throw new Error('RTS/RTO reconciliation not found after insert');
 
       console.log(
         `RTS/RTO reconciliation processed for order ${data.orderId}: ₹${data.reversalAmount} reversed`,
@@ -2643,18 +2696,25 @@ export class DatabaseStorage implements IStorage {
 
     if (existing) {
       // Update existing
-      const [updated] = await db
+      await db
         .update(paymentCycles)
         .set({ ...cycle, updatedAt: new Date() })
-        .where(eq(paymentCycles.id, existing.id))
-        .returning();
+        .where(eq(paymentCycles.id, existing.id));
+      const [updated] = await db
+        .select()
+        .from(paymentCycles)
+        .where(eq(paymentCycles.id, existing.id));
+      if (!updated) throw new Error('Payment cycle not found after update');
       return updated;
     } else {
       // Create new
+      const id = randomUUID();
+      await db.insert(paymentCycles).values({ ...cycle, id } as any);
       const [created] = await db
-        .insert(paymentCycles)
-        .values(cycle)
-        .returning();
+        .select()
+        .from(paymentCycles)
+        .where(eq(paymentCycles.id, id));
+      if (!created) throw new Error('Payment cycle not found after insert');
       return created;
     }
   }
@@ -2682,7 +2742,13 @@ export class DatabaseStorage implements IStorage {
   async createExportRecord(
     record: InsertExportHistory,
   ): Promise<ExportHistory> {
-    const [result] = await db.insert(exportHistory).values(record).returning();
+    const id = randomUUID();
+    await db.insert(exportHistory).values({ ...record, id } as any);
+    const [result] = await db
+      .select()
+      .from(exportHistory)
+      .where(eq(exportHistory.id, id));
+    if (!result) throw new Error('Export record not found after insert');
     return result;
   }
 

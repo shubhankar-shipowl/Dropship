@@ -1,35 +1,41 @@
-// import { Pool, neonConfig } from '@neondatabase/serverless';
-// import { drizzle } from 'drizzle-orm/neon-serverless';
-// import ws from "ws";
-// import * as schema from "@shared/schema";
-
-// neonConfig.webSocketConstructor = ws;
-
-// // Support both DB_URL and DATABASE_URL for backward compatibility
-// const databaseUrl = process.env.DB_URL || process.env.DATABASE_URL;
-
-// if (!databaseUrl) {
-//   throw new Error(
-//     "DB_URL or DATABASE_URL must be set. Did you forget to provision a database?",
-//   );
-// }
-
-// export const pool = new Pool({ connectionString: databaseUrl });
-// export const db = drizzle({ client: pool, schema });
-
-import pg from 'pg';
-import { drizzle } from 'drizzle-orm/node-postgres';
+import mysql from 'mysql2/promise';
+import { drizzle } from 'drizzle-orm/mysql2';
 import * as schema from '@shared/schema';
 
-const { Pool } = pg;
+// Parse connection details from env vars or DATABASE_URL
+let connectionConfig: mysql.PoolOptions;
 
-const db_url = process.env.DATABASE_URL;
-
-if (!db_url) {
+if (process.env.DATABASE_URL) {
+  // Parse DATABASE_URL if provided
+  const url = new URL(process.env.DATABASE_URL);
+  connectionConfig = {
+    host: url.hostname,
+    port: parseInt(url.port || '3306', 10),
+    user: url.username,
+    password: url.password,
+    database: url.pathname.slice(1), // Remove leading '/'
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0,
+  };
+} else if (process.env.DB_HOST && process.env.DB_USER && process.env.DB_PASSWORD && process.env.DB_NAME) {
+  // Use individual env vars
+  connectionConfig = {
+    host: process.env.DB_HOST,
+    port: parseInt(process.env.DB_PORT || '3306', 10),
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+    database: process.env.DB_NAME,
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0,
+  };
+} else {
   throw new Error(
-    'DATABASE_URL must be set. Did you forget to provision a database?',
+    'DATABASE_URL or DB_HOST, DB_USER, DB_PASSWORD, DB_NAME must be set. Did you forget to provision a database?',
   );
 }
 
-export const pool = new Pool({ connectionString: db_url });
-export const db = drizzle(pool, { schema });
+// Create MySQL connection pool
+export const pool = mysql.createPool(connectionConfig);
+export const db = drizzle(pool, { schema, mode: 'default' });

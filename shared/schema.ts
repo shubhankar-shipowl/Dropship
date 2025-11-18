@@ -1,35 +1,35 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, decimal, timestamp, boolean, jsonb } from "drizzle-orm/pg-core";
+import { mysqlTable, text, varchar, int, decimal, timestamp, boolean, json } from "drizzle-orm/mysql-core";
 import { relations } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
 // Upload Data
-export const uploadSessions = pgTable("upload_sessions", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+export const uploadSessions = mysqlTable("upload_sessions", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`UUID()`),
   filename: text("filename").notNull(),
-  totalRows: integer("total_rows").notNull(),
-  processedRows: integer("processed_rows").notNull(),
-  cancelledRows: integer("cancelled_rows").notNull(),
-  uploadedAt: timestamp("uploaded_at", { withTimezone: true }).defaultNow().notNull(),
+  totalRows: int("total_rows").notNull(),
+  processedRows: int("processed_rows").notNull(),
+  cancelledRows: int("cancelled_rows").notNull(),
+  uploadedAt: timestamp("uploaded_at").defaultNow().notNull(),
 });
 
-export const orderData = pgTable("order_data", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  uploadSessionId: varchar("upload_session_id").references(() => uploadSessions.id).notNull(),
+export const orderData = mysqlTable("order_data", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`UUID()`),
+  uploadSessionId: varchar("upload_session_id", { length: 36 }).references(() => uploadSessions.id).notNull(),
   dropshipperEmail: text("dropshipper_email").notNull(),
   orderId: text("order_id").notNull(),
-  orderDate: timestamp("order_date", { withTimezone: true }).notNull(),
+  orderDate: timestamp("order_date").notNull(),
   waybill: text("waybill"),
   productName: text("product_name").notNull(),
   sku: text("sku"),
   productUid: text("product_uid").notNull(), // SKU or Product Name as fallback
-  qty: integer("qty").notNull(),
+  qty: int("qty").notNull(),
   productValue: decimal("product_value", { precision: 10, scale: 2 }).notNull(),
   mode: text("mode"), // Payment mode: COD, Prepaid, etc.
   status: text("status").notNull(),
-  deliveredDate: timestamp("delivered_date", { withTimezone: true }),
-  rtsDate: timestamp("rts_date", { withTimezone: true }),
+  deliveredDate: timestamp("delivered_date"),
+  rtsDate: timestamp("rts_date"),
   shippingProvider: text("shipping_provider").notNull(),
   pincode: text("pincode"),
   state: text("state"),
@@ -37,8 +37,8 @@ export const orderData = pgTable("order_data", {
 });
 
 // Settings Tables
-export const productPrices = pgTable("product_prices", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+export const productPrices = mysqlTable("product_prices", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`UUID()`),
   dropshipperEmail: text("dropshipper_email").notNull(),
   productUid: text("product_uid").notNull(),
   productName: text("product_name").notNull(),
@@ -46,46 +46,46 @@ export const productPrices = pgTable("product_prices", {
   productWeight: decimal("product_weight", { precision: 8, scale: 3 }),
   productCostPerUnit: decimal("product_cost_per_unit", { precision: 10, scale: 2 }).notNull(),
   currency: text("currency").default("INR").notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
-export const shippingRates = pgTable("shipping_rates", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+export const shippingRates = mysqlTable("shipping_rates", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`UUID()`),
   productUid: text("product_uid").notNull(),
   productWeight: decimal("product_weight", { precision: 8, scale: 3 }).notNull(),
   shippingProvider: text("shipping_provider").notNull(),
   shippingRatePerKg: decimal("shipping_rate_per_kg", { precision: 10, scale: 2 }).notNull(),
   currency: text("currency").default("INR").notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
 // Payout Tracking
-export const payoutLog = pgTable("payout_log", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+export const payoutLog = mysqlTable("payout_log", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`UUID()`),
   orderId: text("order_id").notNull(),
   waybill: text("waybill"),
   dropshipperEmail: text("dropshipper_email").notNull(),
   productUid: text("product_uid").notNull(),
-  paidOn: timestamp("paid_on", { withTimezone: true }).defaultNow().notNull(),
-  periodFrom: timestamp("period_from", { withTimezone: true }).notNull(),
-  periodTo: timestamp("period_to", { withTimezone: true }).notNull(),
+  paidOn: timestamp("paid_on").defaultNow().notNull(),
+  periodFrom: timestamp("period_from").notNull(),
+  periodTo: timestamp("period_to").notNull(),
   paidAmount: decimal("paid_amount", { precision: 10, scale: 2 }).notNull(),
-  payoutData: jsonb("payout_data"), // Store detailed breakdown
+  payoutData: json("payout_data"), // Store detailed breakdown
 });
 
 // RTS/RTO Reconciliation Tracking
-export const rtsRtoReconciliation = pgTable("rts_rto_reconciliation", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+export const rtsRtoReconciliation = mysqlTable("rts_rto_reconciliation", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`UUID()`),
   orderId: text("order_id").notNull(),
   waybill: text("waybill"),
   dropshipperEmail: text("dropshipper_email").notNull(),
   productUid: text("product_uid").notNull(),
-  originalPayoutId: varchar("original_payout_id").references(() => payoutLog.id),
+  originalPayoutId: varchar("original_payout_id", { length: 36 }).references(() => payoutLog.id),
   originalPaidAmount: decimal("original_paid_amount", { precision: 10, scale: 2 }).notNull(),
   reversalAmount: decimal("reversal_amount", { precision: 10, scale: 2 }).notNull(),
   rtsRtoStatus: text("rts_rto_status").notNull(), // 'RTS', 'RTO', 'RTO-Dispatched'
-  rtsRtoDate: timestamp("rts_rto_date", { withTimezone: true }).notNull(),
-  reconciledOn: timestamp("reconciled_on", { withTimezone: true }).defaultNow().notNull(),
+  rtsRtoDate: timestamp("rts_rto_date").notNull(),
+  reconciledOn: timestamp("reconciled_on").defaultNow().notNull(),
   reconciledBy: text("reconciled_by"), // Future: user who processed the reconciliation
   notes: text("notes"),
   status: text("status").default("pending").notNull(), // 'pending', 'processed', 'disputed'
@@ -226,28 +226,28 @@ export interface PayoutCalculationRequest {
 }
 
 // Payment Cycles Configuration
-export const paymentCycles = pgTable("payment_cycles", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+export const paymentCycles = mysqlTable("payment_cycles", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`UUID()`),
   dropshipperEmail: text("dropshipper_email").notNull(),
   cycleType: text("cycle_type").notNull(), // 'daily', 'weekly', 'biweekly', 'monthly', 'custom'
-  cycleParams: jsonb("cycle_params").notNull(), // Store cycle-specific parameters like days offset, weekdays, etc.
+  cycleParams: json("cycle_params").notNull(), // Store cycle-specific parameters like days offset, weekdays, etc.
   isActive: boolean("is_active").default(true).notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
 // Export History
-export const exportHistory = pgTable("export_history", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+export const exportHistory = mysqlTable("export_history", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`UUID()`),
   dropshipperEmail: text("dropshipper_email").notNull(),
   exportType: text("export_type").notNull(), // 'payout_report', 'payment_history', 'order_data'
-  dateRangeFrom: timestamp("date_range_from", { withTimezone: true }),
-  dateRangeTo: timestamp("date_range_to", { withTimezone: true }),
-  paymentCycleId: varchar("payment_cycle_id").references(() => paymentCycles.id),
-  totalRecords: integer("total_records").notNull(),
-  fileSize: integer("file_size"), // in bytes
-  exportedAt: timestamp("exported_at", { withTimezone: true }).defaultNow().notNull(),
-  exportParams: jsonb("export_params"), // Store additional export parameters
+  dateRangeFrom: timestamp("date_range_from"),
+  dateRangeTo: timestamp("date_range_to"),
+  paymentCycleId: varchar("payment_cycle_id", { length: 36 }).references(() => paymentCycles.id),
+  totalRecords: int("total_records").notNull(),
+  fileSize: int("file_size"), // in bytes
+  exportedAt: timestamp("exported_at").defaultNow().notNull(),
+  exportParams: json("export_params"), // Store additional export parameters
 });
 
 // Insert schemas for new tables
@@ -263,31 +263,31 @@ export const insertExportHistorySchema = createInsertSchema(exportHistory).omit(
 });
 
 // Settlement Settings
-export const settlementSettings = pgTable("settlement_settings", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+export const settlementSettings = mysqlTable("settlement_settings", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`UUID()`),
   frequency: text("frequency").notNull(), // 'monthly', 'twice_weekly', 'thrice_weekly'
-  lastPaymentDoneOn: timestamp("last_payment_done_on", { withTimezone: true }),
-  lastDeliveredCutoff: timestamp("last_delivered_cutoff", { withTimezone: true }),
+  lastPaymentDoneOn: timestamp("last_payment_done_on"),
+  lastDeliveredCutoff: timestamp("last_delivered_cutoff"),
   dPlus2Enabled: boolean("d_plus_2_enabled").default(true).notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
 // Settlement Exports Log
-export const settlementExports = pgTable("settlement_exports", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  runDate: timestamp("run_date", { withTimezone: true }).notNull(),
-  orderStart: timestamp("order_start", { withTimezone: true }).notNull(),
-  orderEnd: timestamp("order_end", { withTimezone: true }).notNull(),
-  delStart: timestamp("del_start", { withTimezone: true }).notNull(),
-  delEnd: timestamp("del_end", { withTimezone: true }).notNull(),
-  shippingTotal: integer("shipping_total").notNull(),
-  codTotal: integer("cod_total").notNull(),
-  productCostTotal: integer("product_cost_total").notNull(),
-  adjustmentsTotal: integer("adjustments_total").default(0).notNull(),
-  finalPayable: integer("final_payable").notNull(),
-  ordersCount: integer("orders_count").notNull(),
-  exportedAt: timestamp("exported_at", { withTimezone: true }).defaultNow().notNull(),
+export const settlementExports = mysqlTable("settlement_exports", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`UUID()`),
+  runDate: timestamp("run_date").notNull(),
+  orderStart: timestamp("order_start").notNull(),
+  orderEnd: timestamp("order_end").notNull(),
+  delStart: timestamp("del_start").notNull(),
+  delEnd: timestamp("del_end").notNull(),
+  shippingTotal: int("shipping_total").notNull(),
+  codTotal: int("cod_total").notNull(),
+  productCostTotal: int("product_cost_total").notNull(),
+  adjustmentsTotal: int("adjustments_total").default(0).notNull(),
+  finalPayable: int("final_payable").notNull(),
+  ordersCount: int("orders_count").notNull(),
+  exportedAt: timestamp("exported_at").defaultNow().notNull(),
 });
 
 // Insert schemas for settlement tables
