@@ -42,7 +42,6 @@ export const pool = mysql.createPool({
   waitForConnections: true,
   connectionLimit: 20, // Increased from 10 for better concurrency
   queueLimit: 0,
-  acquireTimeout: 60000, // 60 seconds to acquire connection
   enableKeepAlive: true,
   keepAliveInitialDelay: 0,
   // Note: timeout is handled per-query, not at pool level
