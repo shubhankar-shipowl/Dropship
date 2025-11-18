@@ -27,17 +27,23 @@ server {
     
     location /api/upload {
         # Specific settings for upload endpoint
-        proxy_pass http://localhost:5000;
+        proxy_pass http://localhost:3007;
         proxy_connect_timeout 1800s;
         proxy_send_timeout 1800s;
         proxy_read_timeout 1800s;
         client_max_body_size 250M;
         proxy_buffering off;
         proxy_request_buffering off;
+        # Disable request buffering for large uploads
+        proxy_request_buffering off;
+        # Increase buffer sizes
+        proxy_buffer_size 128k;
+        proxy_buffers 4 256k;
+        proxy_busy_buffers_size 256k;
     }
     
     location / {
-        proxy_pass http://localhost:5000;
+        proxy_pass http://localhost:3007;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection 'upgrade';
