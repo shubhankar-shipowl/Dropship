@@ -241,8 +241,8 @@ export class DatabaseStorage implements IStorage {
   async insertOrderData(orders: InsertOrderData[]): Promise<void> {
     if (orders.length === 0) return;
 
-    // Use small batch size to avoid parameter binding limits and handle conflicts
-    const batchSize = 50; // Reduced for better error handling
+    // Optimized batch size for MySQL - can handle much larger batches
+    const batchSize = 1000; // Increased from 50 for better performance
 
     console.log(
       `Starting bulk insert of ${orders.length} orders in batches of ${batchSize}`,
@@ -251,54 +251,63 @@ export class DatabaseStorage implements IStorage {
     let totalInserted = 0;
     let totalFailed = 0;
 
+    // Process batches in parallel for better performance
+    const batchPromises: Promise<void>[] = [];
+    const maxConcurrentBatches = 5; // Process 5 batches concurrently
+
     for (let i = 0; i < orders.length; i += batchSize) {
       const batch = orders.slice(i, i + batchSize).map(order => ({
         ...order,
         id: randomUUID()
       }));
 
-      try {
-        // Insert without conflict handling since table only has ID primary key
-        // This means duplicates are allowed by design
-        await db.insert(orderData).values(batch as any);
+      const batchPromise = (async () => {
+        try {
+          // Insert without conflict handling since table only has ID primary key
+          await db.insert(orderData).values(batch as any);
+          totalInserted += batch.length;
 
-        totalInserted += batch.length;
-
-        // Log progress for every batch to track exactly what's happening
-        console.log(
-          `Inserted batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(
-            orders.length / batchSize,
-          )} (${totalInserted}/${orders.length} records)`,
-        );
-      } catch (error) {
-        console.error(
-          `Error inserting batch ${Math.floor(i / batchSize) + 1}:`,
-          error,
-        );
-        console.error(
-          `Failed batch had ${batch.length} records from index ${i} to ${
-            i + batch.length - 1
-          }`,
-        );
-
-        // Try to insert records individually to identify exactly which ones fail
-        console.log(
-          'Attempting individual record insertion for failed batch...',
-        );
-        for (let j = 0; j < batch.length; j++) {
-          try {
-            await db.insert(orderData).values([{ ...batch[j], id: randomUUID() } as any]);
-            totalInserted++;
-          } catch (individualError) {
-            console.error(
-              `Failed to insert individual record ${i + j}:`,
-              batch[j].orderId,
-              individualError,
+          // Log progress less frequently to reduce overhead
+          if (i % (batchSize * 10) === 0 || i + batchSize >= orders.length) {
+            console.log(
+              `Inserted ${totalInserted}/${orders.length} records (${Math.round((totalInserted / orders.length) * 100)}%)`,
             );
-            totalFailed++;
+          }
+        } catch (error) {
+          console.error(
+            `Error inserting batch ${Math.floor(i / batchSize) + 1}:`,
+            error,
+          );
+
+          // Try to insert records individually for failed batch
+          for (let j = 0; j < batch.length; j++) {
+            try {
+              await db.insert(orderData).values([{ ...batch[j], id: randomUUID() } as any]);
+              totalInserted++;
+            } catch (individualError) {
+              console.error(
+                `Failed to insert individual record ${i + j}:`,
+                batch[j].orderId,
+                individualError,
+              );
+              totalFailed++;
+            }
           }
         }
+      })();
+
+      batchPromises.push(batchPromise);
+
+      // Limit concurrent batches to avoid overwhelming the database
+      if (batchPromises.length >= maxConcurrentBatches) {
+        await Promise.all(batchPromises);
+        batchPromises.length = 0;
       }
+    }
+
+    // Wait for remaining batches
+    if (batchPromises.length > 0) {
+      await Promise.all(batchPromises);
     }
 
     console.log(
@@ -307,7 +316,7 @@ export class DatabaseStorage implements IStorage {
 
     if (totalFailed > 0) {
       console.warn(
-        `WARNING: ${totalFailed} records failed to insert - this explains the data loss issue`,
+        `WARNING: ${totalFailed} records failed to insert`,
       );
     }
   }
