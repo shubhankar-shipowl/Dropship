@@ -93,9 +93,11 @@ app.use((req, res, next) => {
     req.setTimeout(30 * 60 * 1000); // 30 minutes for file uploads
     res.setTimeout(30 * 60 * 1000);
     
-    // Keep connection alive with headers
-    res.setHeader('Connection', 'keep-alive');
-    res.setHeader('Keep-Alive', 'timeout=1800'); // 30 minutes
+    // Keep connection alive with headers (only if headers not sent)
+    if (!res.headersSent) {
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('Keep-Alive', 'timeout=1800'); // 30 minutes
+    }
   } else {
     req.setTimeout(2 * 60 * 1000); // 2 minutes for regular requests
     res.setTimeout(2 * 60 * 1000);
@@ -162,11 +164,8 @@ app.use((req, res, next) => {
     10,
   );
   server.listen(
-    {
-      port,
-      host: '0.0.0.0',
-      reusePort: true,
-    },
+    port,
+    '0.0.0.0',
     () => {
       log(`serving on port ${port}`);
     },

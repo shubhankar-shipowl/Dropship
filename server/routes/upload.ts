@@ -196,8 +196,12 @@ export function registerUploadRoutes(app: Express): void {
     // Set extended timeout and keep-alive for large file processing
     req.setTimeout(30 * 60 * 1000); // 30 minutes
     res.setTimeout(30 * 60 * 1000);
-    res.setHeader('Connection', 'keep-alive');
-    res.setHeader('Keep-Alive', 'timeout=1800');
+    
+    // Set keep-alive headers only if not already set
+    if (!res.headersSent) {
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('Keep-Alive', 'timeout=1800');
+    }
     
     try {
       if (!req.file) {
