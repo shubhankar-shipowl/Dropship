@@ -47,3 +47,92 @@ export const pool = mysql.createPool({
   // Note: timeout is handled per-query, not at pool level
 });
 export const db = drizzle(pool, { schema, mode: 'default' });
+
+// Connection lifecycle management
+let isConnected = false;
+let isShuttingDown = false;
+
+/**
+ * Initialize and verify database connection
+ * Call this when the app starts
+ */
+export async function initializeDatabase(): Promise<void> {
+  if (isConnected) {
+    console.log('✅ Database connection already initialized');
+    return;
+  }
+
+  try {
+    console.log('🔌 Initializing database connection...');
+    const connection = await pool.getConnection();
+    
+    // Test the connection with a simple query
+    await connection.query('SELECT 1');
+    connection.release();
+    
+    isConnected = true;
+    console.log('✅ Database connection pool initialized successfully');
+    // Log connection pool info (pool is created with connectionLimit: 20)
+    console.log(`📊 Connection pool initialized with connection limit: 20`);
+  } catch (error: any) {
+    console.error('❌ Failed to initialize database connection:', error.message);
+    throw new Error(`Database connection failed: ${error.message}`);
+  }
+}
+
+/**
+ * Gracefully close database connection pool
+ * Call this when the app is shutting down
+ */
+export async function closeDatabase(): Promise<void> {
+  if (isShuttingDown) {
+    console.log('⚠️ Database shutdown already in progress');
+    return;
+  }
+
+  if (!isConnected) {
+    console.log('ℹ️ Database connection not initialized, nothing to close');
+    return;
+  }
+
+  isShuttingDown = true;
+  console.log('🔌 Closing database connection pool...');
+
+  try {
+    await pool.end();
+    isConnected = false;
+    console.log('✅ Database connection pool closed successfully');
+  } catch (error: any) {
+    console.error('❌ Error closing database connection pool:', error.message);
+    throw error;
+  }
+}
+
+/**
+ * Get connection pool status
+ */
+export function getDatabaseStatus(): {
+  connected: boolean;
+  shuttingDown: boolean;
+  poolSize: number;
+  freeConnections: number;
+} {
+  try {
+    // Try to get pool internals (mysql2 pool structure)
+    const poolInternal = (pool as any).pool;
+    return {
+      connected: isConnected,
+      shuttingDown: isShuttingDown,
+      poolSize: poolInternal?._allConnections?.length || 0,
+      freeConnections: poolInternal?._freeConnections?.length || 0,
+    };
+  } catch (error) {
+    // If we can't access pool internals, return basic status
+    return {
+      connected: isConnected,
+      shuttingDown: isShuttingDown,
+      poolSize: 0,
+      freeConnections: 0,
+    };
+  }
+}

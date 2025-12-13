@@ -2,7 +2,8 @@ import 'dotenv/config';
 import express, { type Request, Response, NextFunction } from 'express';
 import session from 'express-session';
 import { MySQLSessionStore } from './mysql-session-store';
-import { pool } from './db';
+import { pool, initializeDatabase, closeDatabase } from './db';
+import { initializeCronJobs, stopCronJobs } from './cron-jobs';
 import { registerRoutes } from './routes';
 import { setupVite, serveStatic, log } from './vite';
 import path from 'path';
@@ -136,7 +137,81 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  // Initialize database connection on app start
+  try {
+    await initializeDatabase();
+  } catch (error: any) {
+    console.error('❌ Failed to initialize database. Exiting...');
+    process.exit(1);
+  }
+
+  // Initialize cron jobs
+  initializeCronJobs();
+
   const server = await registerRoutes(app);
+
+  // Setup graceful shutdown handlers (after server is created)
+  let shutdownInProgress = false;
+  const gracefulShutdown = async (signal: string) => {
+    if (shutdownInProgress) {
+      console.log('⚠️ Shutdown already in progress, forcing exit...');
+      process.exit(1);
+    }
+    
+    shutdownInProgress = true;
+    console.log(`\n🛑 Received ${signal}. Starting graceful shutdown...`);
+    
+    // Close server first (stop accepting new requests)
+    return new Promise<void>((resolve) => {
+      if (server) {
+        server.close(() => {
+          console.log('✅ HTTP server closed');
+          resolve();
+        });
+        
+        // Force close after 10 seconds
+        setTimeout(() => {
+          console.log('⚠️ Forcing server close after timeout');
+          resolve();
+        }, 10000);
+      } else {
+        resolve();
+      }
+    }).then(async () => {
+      // Stop cron jobs
+      try {
+        stopCronJobs();
+      } catch (error: any) {
+        console.error('❌ Error stopping cron jobs:', error.message);
+      }
+
+      // Close database connection pool
+      try {
+        await closeDatabase();
+      } catch (error: any) {
+        console.error('❌ Error during database shutdown:', error.message);
+      }
+
+      console.log('✅ Graceful shutdown completed');
+      process.exit(0);
+    });
+  };
+
+  // Handle termination signals
+  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
+  // Handle uncaught exceptions
+  process.on('uncaughtException', (error) => {
+    console.error('❌ Uncaught Exception:', error);
+    gracefulShutdown('uncaughtException');
+  });
+
+  // Handle unhandled promise rejections
+  process.on('unhandledRejection', (reason, promise) => {
+    console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+    gracefulShutdown('unhandledRejection');
+  });
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;

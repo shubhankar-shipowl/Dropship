@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Calculator, Settings, User, Download, Search, TrendingUp, Package, Truck, Coins, Database, Eye, RotateCcw, Calendar } from "lucide-react";
+import { Calculator, Settings, User, Download, Search, TrendingUp, Package, Truck, Coins, Database, Eye, RotateCcw, Calendar, Mail } from "lucide-react";
 import { Link } from "wouter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -17,6 +17,7 @@ import MissingDataDisplay from "@/components/missing-data-display";
 import AnalyticsDashboard from "@/components/analytics-dashboard";
 import { UploadHistory } from "@/components/upload-history";
 import ShippingCostBreakdown from "@/components/shipping-cost-breakdown";
+import PayoutEmailModal from "@/components/payout-email-modal";
 import { apiRequest } from "@/lib/queryClient";
 import type { PayoutSummary, PayoutRow } from "@shared/schema";
 
@@ -47,6 +48,7 @@ export default function Dashboard() {
   const [appliedDropshipper, setAppliedDropshipper] = useState<string>("thedaazarastore@gmail.com");
   const [showSettings, setShowSettings] = useState(false);
   const [isApplyingFilters, setIsApplyingFilters] = useState(false);
+  const [showEmailModal, setShowEmailModal] = useState(false);
   const [uploadSuccess, setUploadSuccess] = useState<{
     processedRows: number;
     cancelledRows: number;
@@ -324,25 +326,37 @@ export default function Dashboard() {
               <div className="space-y-4 md:space-y-8 mx-2 md:mx-0">
                 <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 sm:gap-0">
                   <h2 className="text-lg md:text-2xl font-bold text-gray-800">Calculation Results</h2>
-                  <Button
-                    onClick={handleExportWorkbook}
-                    disabled={isExporting}
-                    variant="outline"
-                    className="w-full sm:w-auto gap-2 bg-gradient-to-r from-green-500 to-emerald-600 text-white border-0 hover:from-green-600 hover:to-emerald-700 px-4 py-2 text-sm md:text-base"
-                    data-testid="button-download-payout"
-                  >
-                    {isExporting ? (
-                      <>
-                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                        Exporting...
-                      </>
-                    ) : (
-                      <>
-                        <Download className="h-4 w-4" />
-                        Download Excel
-                      </>
-                    )}
-                  </Button>
+                  <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+                    <Button
+                      onClick={() => setShowEmailModal(true)}
+                      disabled={!appliedDropshipper || appliedDropshipper === "all"}
+                      variant="outline"
+                      className="w-full sm:w-auto gap-2 bg-gradient-to-r from-blue-500 to-indigo-600 text-white border-0 hover:from-blue-600 hover:to-indigo-700 px-4 py-2 text-sm md:text-base"
+                      data-testid="button-send-email"
+                    >
+                      <Mail className="h-4 w-4" />
+                      Send Mail
+                    </Button>
+                    <Button
+                      onClick={handleExportWorkbook}
+                      disabled={isExporting}
+                      variant="outline"
+                      className="w-full sm:w-auto gap-2 bg-gradient-to-r from-green-500 to-emerald-600 text-white border-0 hover:from-green-600 hover:to-emerald-700 px-4 py-2 text-sm md:text-base"
+                      data-testid="button-download-payout"
+                    >
+                      {isExporting ? (
+                        <>
+                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                          Exporting...
+                        </>
+                      ) : (
+                        <>
+                          <Download className="h-4 w-4" />
+                          Download Excel
+                        </>
+                      )}
+                    </Button>
+                  </div>
                 </div>
                 <SummaryCards summary={payoutData.summary} isLoading={isCalculating} viewType="webview" />
               </div>
@@ -546,6 +560,20 @@ export default function Dashboard() {
           onOpenChange={setShowSettings}
           onSettingsUpdated={() => refetchPayouts()}
         />
+
+        {/* Email Modal */}
+        {payoutData && appliedDropshipper && appliedDropshipper !== "all" && (
+          <PayoutEmailModal
+            open={showEmailModal}
+            onOpenChange={setShowEmailModal}
+            dropshipperEmail={appliedDropshipper}
+            summary={payoutData.summary}
+            orderDateFrom={appliedOrderDateFrom}
+            orderDateTo={appliedOrderDateTo}
+            deliveredDateFrom={appliedDeliveredDateFrom}
+            deliveredDateTo={appliedDeliveredDateTo}
+          />
+        )}
       </div>
     </div>
   );
