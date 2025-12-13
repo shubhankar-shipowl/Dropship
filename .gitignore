@@ -7,7 +7,6 @@ build/
 *.tsbuildinfo
 
 # Environment variables (IMPORTANT: Contains sensitive data like DB passwords)
-.env
 .env.local
 .env.development
 .env.production
