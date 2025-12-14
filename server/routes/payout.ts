@@ -301,6 +301,35 @@ async function getGmailClient() {
   return google.gmail({ version: 'v1', auth: oauth2Client });
 }
 
+// Helper function to find existing thread for the same recipient and subject
+async function findExistingThread(gmail: any, recipient: string, subjectPrefix: string): Promise<string | null> {
+  try {
+    // Search for existing emails to the same recipient with similar subject
+    // Gmail search query: find sent emails to this recipient with subject containing "Payout Statement"
+    const query = `to:${recipient} subject:"${subjectPrefix}"`;
+    console.log(`🔍 Searching for existing thread with query: ${query}`);
+    
+    const searchResponse = await gmail.users.messages.list({
+      userId: 'me',
+      q: query,
+      maxResults: 1, // We only need the most recent one
+    });
+
+    const messages = searchResponse.data.messages || [];
+    if (messages.length > 0 && messages[0].threadId) {
+      console.log(`✅ Found existing thread: ${messages[0].threadId}`);
+      return messages[0].threadId;
+    }
+
+    console.log('ℹ️ No existing thread found - will create new thread');
+    return null;
+  } catch (error: any) {
+    console.error('⚠️ Error searching for existing thread:', error.message);
+    // Don't throw - just return null and create a new thread
+    return null;
+  }
+}
+
 export function registerPayoutRoutes(app: Express): void {
   // Get all dropshippers
   app.get('/api/dropshippers', async (req, res) => {
@@ -644,14 +673,28 @@ export function registerPayoutRoutes(app: Express): void {
             .replace(/\//g, '_')
             .replace(/=+$/, '');
 
+          // Find existing thread for email threading (so emails appear in same conversation)
+          const subjectPrefix = request.subject.includes('Payout Statement') 
+            ? 'Payout Statement' 
+            : request.subject.substring(0, 30);
+          const existingThreadId = await findExistingThread(gmail, request.to, subjectPrefix);
+
           // Send email first (without labelIds - it doesn't work reliably for user labels)
           console.log(`📤 Sending email via Gmail API...`);
-          const sendResponse = await gmail.users.messages.send({
+          const sendRequest: any = {
             userId: 'me',
             requestBody: {
               raw: encodedEmail,
             },
-          });
+          };
+
+          // Add threadId if we found an existing thread (this groups emails into same conversation)
+          if (existingThreadId) {
+            sendRequest.requestBody.threadId = existingThreadId;
+            console.log(`🔗 Using existing thread ID: ${existingThreadId} (emails will be grouped)`);
+          }
+
+          const sendResponse = await gmail.users.messages.send(sendRequest);
 
           const messageId = sendResponse.data.id;
           if (!messageId) {
@@ -663,14 +706,48 @@ export function registerPayoutRoutes(app: Express): void {
 
           // Apply label AFTER sending (this is the correct way for user-created labels)
           try {
+            // Get current labels on the message
+            const currentMessage = await gmail.users.messages.get({
+              userId: 'me',
+              id: messageId,
+              format: 'metadata',
+            });
+            const currentLabelIds = currentMessage.data.labelIds || [];
+            
+            // Get all user-created labels to identify which ones to remove
+            const labelsList = await gmail.users.labels.list({ userId: 'me' });
+            const userLabels = labelsList.data.labels?.filter((l: any) => l.type === 'user') || [];
+            
+            // Find all user-created labels that are currently on the message (except the one we want to add)
+            const labelsToRemove: string[] = [];
+            for (const userLabel of userLabels) {
+              // Skip the label we want to keep
+              if (userLabel.id === labelId) {
+                continue;
+              }
+              // If this user label is on the message, mark it for removal
+              if (currentLabelIds.includes(userLabel.id)) {
+                labelsToRemove.push(userLabel.id);
+                console.log(`🗑️ Will remove user label "${userLabel.name}" (ID: ${userLabel.id}) to ensure only "${labelNameToUse}" is applied`);
+              }
+            }
+
             console.log(`🏷️ Applying "${labelNameToUse}" label (ID: ${labelId}) to message ${messageId}...`);
-            const modifyResponse = await gmail.users.messages.modify({
+            const modifyRequest: any = {
               userId: 'me',
               id: messageId,
               requestBody: {
                 addLabelIds: [labelId],
               },
-            });
+            };
+
+            // Remove all other user-created labels to ensure only the selected label is applied
+            if (labelsToRemove.length > 0) {
+              modifyRequest.requestBody.removeLabelIds = labelsToRemove;
+              console.log(`🗑️ Removing ${labelsToRemove.length} user label(s) to ensure only "${labelNameToUse}" is applied`);
+            }
+
+            const modifyResponse = await gmail.users.messages.modify(modifyRequest);
             console.log(`✅ "${labelNameToUse}" label applied successfully`);
             console.log(`📧 Message labels after modification:`, modifyResponse.data.labelIds);
 
@@ -800,6 +877,49 @@ export function registerPayoutRoutes(app: Express): void {
         .replace(/^FINAL PAYABLE:/gm, '<h2 style="color: #16a34a; margin-top: 20px;">FINAL PAYABLE:</h2>')
         .replace(/^Order Statistics:/gm, '<h3 style="color: #7c3aed; margin-top: 15px;">Order Statistics:</h3>');
 
+      // For SMTP threading: Try to find existing message ID for this recipient
+      // This helps Gmail group emails into the same conversation
+      let inReplyTo: string | undefined;
+      let references: string | undefined;
+      
+      if (gmail) {
+        try {
+          const subjectPrefix = request.subject.includes('Payout Statement') 
+            ? 'Payout Statement' 
+            : request.subject.substring(0, 30);
+          const query = `to:${request.to} subject:"${subjectPrefix}"`;
+          const searchResponse = await gmail.users.messages.list({
+            userId: 'me',
+            q: query,
+            maxResults: 1,
+          });
+          
+          if (searchResponse.data.messages && searchResponse.data.messages.length > 0) {
+            const messageId = searchResponse.data.messages[0].id;
+            const messageDetails = await gmail.users.messages.get({
+              userId: 'me',
+              id: messageId,
+              format: 'metadata',
+              metadataHeaders: ['Message-ID', 'References'],
+            });
+            
+            const headers = messageDetails.data.payload?.headers || [];
+            const existingMessageId = headers.find((h: any) => h.name === 'Message-ID')?.value;
+            const existingReferences = headers.find((h: any) => h.name === 'References')?.value;
+            
+            if (existingMessageId) {
+              inReplyTo = existingMessageId;
+              references = existingReferences 
+                ? `${existingReferences} ${existingMessageId}` 
+                : existingMessageId;
+              console.log(`🔗 Found existing email thread - will group with previous email`);
+            }
+          }
+        } catch (threadError: any) {
+          console.log('ℹ️ Could not find existing thread for SMTP (will create new conversation):', threadError.message);
+        }
+      }
+
       // Send email
       console.log('📤 Attempting to send email...');
       const mailOptions: any = {
@@ -807,6 +927,9 @@ export function registerPayoutRoutes(app: Express): void {
         to: request.to,
         subject: request.subject,
         text: request.content,
+        // Add threading headers for SMTP to group emails in same conversation
+        ...(inReplyTo && { inReplyTo }),
+        ...(references && { references }),
         html: `
           <!DOCTYPE html>
           <html>
