@@ -46,14 +46,15 @@ export default function PayoutEmailModal({
   const { toast } = useToast();
   const [isSending, setIsSending] = useState(false);
   const [labels, setLabels] = useState<Array<{ id: string; name: string }>>([]);
-  const [selectedLabel, setSelectedLabel] = useState("Dropshipper");
+  // No default label selected in the UI – user must choose explicitly
+  const [selectedLabel, setSelectedLabel] = useState("");
   const [newLabelName, setNewLabelName] = useState("");
   const [showNewLabelInput, setShowNewLabelInput] = useState(false);
   const [isLoadingLabels, setIsLoadingLabels] = useState(false);
   const [isCreatingLabel, setIsCreatingLabel] = useState(false);
   
   // Store the selected label in a ref to track changes - ALWAYS use this as source of truth
-  const selectedLabelRef = useRef<string>("Dropshipper");
+  const selectedLabelRef = useRef<string>("");
   
   // Initialize ref with current state
   useEffect(() => {
@@ -118,6 +119,8 @@ Payout Team`;
 
   const [to, setTo] = useState(dropshipperEmail);
   const [subject, setSubject] = useState(generateSubject());
+  // Default CC email – user can edit/remove/add addresses freely
+  const [cc, setCc] = useState("akash@shipowl.io");
   const [content, setContent] = useState(generateContent());
 
   // Load Gmail labels when modal opens
@@ -137,13 +140,7 @@ Payout Team`;
       
       if (data.success && data.labels) {
         setLabels(data.labels);
-        // Ensure "Dropshipper" is selected if it exists, otherwise keep it as default
-        const hasDropshipper = data.labels.some((l: { name: string }) => l.name === 'Dropshipper');
-        if (hasDropshipper && selectedLabel === 'Dropshipper') {
-          // Label exists and is selected - good
-        } else if (!hasDropshipper && selectedLabel === 'Dropshipper') {
-          // Label doesn't exist but is selected - it will be created when email is sent
-        }
+        // We no longer auto-select any default label in the UI
       }
     } catch (error) {
       console.error('Error loading labels:', error);
@@ -228,14 +225,14 @@ Payout Team`;
     }
 
     // CRITICAL: Always use ref as source of truth (it's updated immediately when label is created)
-    // React state updates are async, so selectedLabel might still be "Dropshipper"
-    // but selectedLabelRef.current will have the latest value immediately
+    // React state updates are async, so selectedLabel might be stale but selectedLabelRef.current
+    // will have the latest value immediately
     const refValue = selectedLabelRef.current;
     const stateValue = selectedLabel;
     
-    // Priority: ref value (most up-to-date) > state value > default
-    // Only use state if ref is empty/undefined, or if ref is placeholder
-    let currentLabel: string;
+    // Priority: ref value (most up-to-date) > state value.
+    // If both are empty/invalid, we send WITHOUT any Gmail label.
+    let currentLabel: string | undefined;
     if (refValue && refValue !== "__create_new__" && refValue.trim() !== "") {
       // Ref has a valid value - use it (this is the source of truth)
       currentLabel = refValue.trim();
@@ -243,12 +240,9 @@ Payout Team`;
       // Ref is empty/invalid, but state has a value - use state and update ref
       currentLabel = stateValue.trim();
       selectedLabelRef.current = currentLabel; // Sync ref with state
-    } else {
-      // Both are empty/invalid - use default
-      currentLabel = "Dropshipper";
     }
     
-    const labelToUse = currentLabel;
+    const labelToUse = currentLabel && currentLabel.length > 0 ? currentLabel : undefined;
     
     console.log('='.repeat(60));
     console.log('📧 PREPARING TO SEND EMAIL');
@@ -258,22 +252,25 @@ Payout Team`;
     console.log('📧 labelToUse (final, after validation):', JSON.stringify(labelToUse));
     console.log('📧 Will send labelName to backend:', JSON.stringify(labelToUse));
     
-    // Validation: If we just created a label, it MUST be in the ref
-    if (refValue && refValue !== "Dropshipper" && refValue !== "__create_new__") {
-      console.log('✅ Using newly created/selected label from ref:', refValue);
-    } else if (stateValue && stateValue !== "Dropshipper" && stateValue !== "__create_new__") {
-      console.log('⚠️ Using label from state (ref might not be updated):', stateValue);
-      // Update ref to match state
-      selectedLabelRef.current = stateValue;
+    if (labelToUse) {
+      // Validation: If we just created a label, it MUST be in the ref
+      if (refValue && refValue !== "__create_new__") {
+        console.log('✅ Using label from ref:', refValue);
+      } else if (stateValue && stateValue !== "__create_new__") {
+        console.log('⚠️ Using label from state (ref might not be updated):', stateValue);
+        // Update ref to match state
+        selectedLabelRef.current = stateValue;
+      }
     } else {
-      console.log('⚠️ No custom label found, using default "Dropshipper"');
+      console.log('ℹ️ No Gmail label selected – email will be sent WITHOUT any label');
     }
     console.log('='.repeat(60));
 
     setIsSending(true);
     try {
-      const requestBody = {
+      const requestBody: any = {
         to,
+        cc: cc || undefined,
         subject,
         content,
         summary,
@@ -282,8 +279,11 @@ Payout Team`;
         deliveredDateFrom,
         deliveredDateTo,
         dropshipperEmail: dropshipperEmail, // Pass dropshipper email for Excel filtering
-        labelName: labelToUse, // Pass selected label name (not the placeholder)
       };
+      // Only include labelName if user explicitly selected a label
+      if (labelToUse) {
+        requestBody.labelName = labelToUse;
+      }
       
       console.log('📤 Sending email request with body:', JSON.stringify({
         ...requestBody,
@@ -343,7 +343,7 @@ Payout Team`;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[600px]">
+      <DialogContent className="sm:max-w-[600px] max-h-[90vh] flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Mail className="h-5 w-5" />
@@ -353,7 +353,8 @@ Payout Team`;
             Review and edit the email before sending to the dropshipper
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-4 py-4">
+        {/* Scrollable body so actions stay visible at the bottom */}
+        <div className="space-y-4 py-4 flex-1 overflow-y-auto">
           <div className="space-y-2">
             <Label htmlFor="to">To</Label>
             <Input
@@ -362,6 +363,18 @@ Payout Team`;
               onChange={(e) => setTo(e.target.value)}
               placeholder="dropshipper@example.com"
             />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="cc">CC (optional)</Label>
+            <Input
+              id="cc"
+              value={cc}
+              onChange={(e) => setCc(e.target.value)}
+              placeholder="cc1@example.com, cc2@example.com"
+            />
+            <p className="text-xs text-muted-foreground">
+              You can enter one or more email addresses, separated by commas.
+            </p>
           </div>
           <div className="space-y-2">
             <Label htmlFor="subject">Subject</Label>
@@ -406,17 +419,13 @@ Payout Team`;
                   <div className="flex items-center gap-2">
                     <Tag className="h-4 w-4" />
                     <SelectValue placeholder="Select a label">
-                      {selectedLabel === "__create_new__" ? "Create New Label" : selectedLabel}
+                      {selectedLabel === "__create_new__"
+                        ? "Create New Label"
+                        : selectedLabel || "Select a label"}
                     </SelectValue>
                   </div>
                 </SelectTrigger>
                 <SelectContent>
-                  {/* Always show "Dropshipper" as default option */}
-                  {!labels.some(l => l.name === 'Dropshipper') && (
-                    <SelectItem value="Dropshipper">
-                      Dropshipper
-                    </SelectItem>
-                  )}
                   {labels.map((label) => (
                     <SelectItem key={label.id} value={label.name}>
                       {label.name}
@@ -440,8 +449,8 @@ Payout Team`;
                       if (e.key === 'Enter') {
                         handleCreateLabel();
                       } else if (e.key === 'Escape') {
-                        setShowNewLabelInput(false);
-                        setSelectedLabel("Dropshipper");
+                    setShowNewLabelInput(false);
+                    setSelectedLabel("");
                       }
                     }}
                     autoFocus
@@ -460,7 +469,7 @@ Payout Team`;
                     variant="outline"
                     onClick={() => {
                       setShowNewLabelInput(false);
-                      setSelectedLabel("Dropshipper");
+                      setSelectedLabel("");
                       setNewLabelName("");
                     }}
                   >
@@ -469,14 +478,14 @@ Payout Team`;
                 </div>
               )}
             </div>
-            {selectedLabel !== "__create_new__" && !showNewLabelInput && (
+            {selectedLabel && selectedLabel !== "__create_new__" && !showNewLabelInput && (
               <p className="text-xs text-muted-foreground">
                 This label will be applied to the email in Gmail (only works with Gmail API)
               </p>
             )}
           </div>
         </div>
-        <DialogFooter>
+        <DialogFooter className="mt-4">
           <Button
             variant="outline"
             onClick={() => onOpenChange(false)}

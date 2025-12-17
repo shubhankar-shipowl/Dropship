@@ -437,11 +437,22 @@ export function registerPayoutRoutes(app: Express): void {
     }
   });
 
+  // Helper to parse CC string (comma-separated) into a clean array of emails
+  const parseCcAddresses = (cc?: string): string[] => {
+    if (!cc) return [];
+    return cc
+      .split(',')
+      .map((addr) => addr.trim())
+      .filter((addr) => addr.length > 0);
+  };
+
   // Send payout email
   app.post('/api/send-payout-email', async (req, res) => {
     try {
       const requestSchema = z.object({
         to: z.string().email(),
+        // Optional CC field - can contain one or more comma-separated email addresses
+        cc: z.string().optional(),
         subject: z.string(),
         content: z.string(),
         summary: z.object({
@@ -461,6 +472,12 @@ export function registerPayoutRoutes(app: Express): void {
 
       const request = requestSchema.parse(req.body);
       console.log('📧 Sending payout email to:', request.to);
+      const ccList = parseCcAddresses(request.cc);
+      if (ccList.length > 0) {
+        console.log('📧 CC recipients:', ccList);
+      } else if (request.cc) {
+        console.warn('⚠️ CC provided but no valid addresses were parsed from:', request.cc);
+      }
 
       // Generate Excel file for attachment
       let excelAttachment: { buffer: Buffer; filename: string } | null = null;
@@ -508,10 +525,10 @@ export function registerPayoutRoutes(app: Express): void {
       
       if (gmail) {
         try {
-          console.log('📧 Using Gmail API to send email with label...');
-          console.log('🔍 Gmail API client initialized, attempting to get/create label...');
+          console.log('📧 Using Gmail API to send email...');
+          console.log('🔍 Gmail API client initialized, checking label configuration...');
           
-          // Get or create label (default to "Dropshipper" ONLY if not specified or empty)
+          // Determine if we should apply a Gmail label
           console.log('='.repeat(60));
           console.log('📧 EMAIL SEND REQUEST RECEIVED');
           console.log('🏷️ Raw request.labelName:', JSON.stringify(request.labelName));
@@ -521,47 +538,25 @@ export function registerPayoutRoutes(app: Express): void {
           console.log('🏷️ Is request.labelName empty string?', request.labelName === '');
           
           const receivedLabelName = request.labelName ? String(request.labelName).trim() : '';
-          const labelNameToUse = receivedLabelName || 'Dropshipper';
+          const shouldApplyLabel = !!receivedLabelName;
+          let labelNameToUse: string | null = null;
+          let labelId: string | null = null;
           
-          console.log('🏷️ Label name after processing:', JSON.stringify(receivedLabelName));
-          console.log('🏷️ Label name to use:', JSON.stringify(labelNameToUse));
-          console.log('🏷️ Full request object (sanitized):', JSON.stringify({ 
-            to: request.to, 
-            subject: request.subject?.substring(0, 50),
-            labelName: request.labelName,
-            hasLabelName: !!request.labelName,
-            labelNameLength: request.labelName?.length || 0
-          }));
-          console.log('='.repeat(60));
-          
-          // CRITICAL: Only default to "Dropshipper" if labelName was NOT provided or is empty
-          // If labelName is explicitly provided (even if empty string), we should respect it
-          // But for safety, if it's empty/undefined, use default
-          if (!receivedLabelName || receivedLabelName.trim() === '') {
-            if (request.labelName === undefined || request.labelName === null) {
-              console.warn('⚠️ WARNING: labelName was not provided in request. Using default "Dropshipper"');
-            } else {
-              console.warn('⚠️ WARNING: labelName was provided but is empty/whitespace. Using default "Dropshipper"');
+          if (shouldApplyLabel) {
+            labelNameToUse = receivedLabelName;
+            console.log('🏷️ Label name after processing:', JSON.stringify(receivedLabelName));
+            console.log('🏷️ Will apply Gmail label:', JSON.stringify(labelNameToUse));
+            
+            console.log(`🔍 Getting or creating label "${labelNameToUse}"...`);
+            labelId = await getOrCreateLabel(gmail, labelNameToUse);
+            
+            if (!labelId) {
+              throw new Error(`Failed to get or create label "${labelNameToUse}" - no label ID returned`);
             }
+            
+            console.log(`✅ Label ID obtained: ${labelId} for label "${labelNameToUse}"`);
           } else {
-            console.log('✅ Using provided label name:', receivedLabelName);
-          }
-          
-          if (!labelNameToUse) {
-            throw new Error('Label name cannot be empty');
-          }
-          
-          console.log(`🔍 Getting or creating label "${labelNameToUse}"...`);
-          const labelId = await getOrCreateLabel(gmail, labelNameToUse);
-          
-          if (!labelId) {
-            throw new Error(`Failed to get or create label "${labelNameToUse}" - no label ID returned`);
-          }
-          
-          console.log(`✅ Label ID obtained: ${labelId} for label "${labelNameToUse}"`);
-          
-          if (!labelId) {
-            throw new Error(`Failed to get or create label "${labelNameToUse}"`);
+            console.log('ℹ️ No labelName provided – email will be sent via Gmail API without applying any user label');
           }
           
           // Convert plain text to HTML with better formatting
@@ -576,6 +571,9 @@ export function registerPayoutRoutes(app: Express): void {
 
           // Create multipart email with attachment if Excel file is available
           let emailBody: string;
+          const ccList = parseCcAddresses(request.cc);
+          const ccHeader = ccList.length > 0 ? `Cc: ${ccList.join(', ')}` : '';
+
           if (excelAttachment) {
             // Multipart email with attachment
             const boundary = `----=_Part_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -584,6 +582,7 @@ export function registerPayoutRoutes(app: Express): void {
             emailBody = [
               `From: "Dropshipper" <${process.env.SMTP_USER || 'shubhankarhaldar07@gmail.com'}>`,
               `To: ${request.to}`,
+              ...(ccHeader ? [ccHeader] : []),
               `Subject: ${request.subject}`,
               `MIME-Version: 1.0`,
               `Content-Type: multipart/mixed; boundary="${boundary}"`,
@@ -634,6 +633,7 @@ export function registerPayoutRoutes(app: Express): void {
             emailBody = [
               `From: "Dropshipper" <${process.env.SMTP_USER || 'shubhankarhaldar07@gmail.com'}>`,
               `To: ${request.to}`,
+              ...(ccHeader ? [ccHeader] : []),
               `Subject: ${request.subject}`,
               'Content-Type: text/html; charset=utf-8',
               '',
@@ -704,102 +704,111 @@ export function registerPayoutRoutes(app: Express): void {
           console.log('✅ Email sent via Gmail API');
           console.log('📧 Message ID:', messageId);
 
+          let labelApplied = false;
+
           // Apply label AFTER sending (this is the correct way for user-created labels)
-          try {
-            // Get current labels on the message
-            const currentMessage = await gmail.users.messages.get({
-              userId: 'me',
-              id: messageId,
-              format: 'metadata',
-            });
-            const currentLabelIds = currentMessage.data.labelIds || [];
-            
-            // Get all user-created labels to identify which ones to remove
-            const labelsList = await gmail.users.labels.list({ userId: 'me' });
-            const userLabels = labelsList.data.labels?.filter((l: any) => l.type === 'user') || [];
-            
-            // Find all user-created labels that are currently on the message (except the one we want to add)
-            const labelsToRemove: string[] = [];
-            for (const userLabel of userLabels) {
-              // Skip the label we want to keep
-              if (userLabel.id === labelId) {
-                continue;
-              }
-              // If this user label is on the message, mark it for removal
-              if (currentLabelIds.includes(userLabel.id)) {
-                labelsToRemove.push(userLabel.id);
-                console.log(`🗑️ Will remove user label "${userLabel.name}" (ID: ${userLabel.id}) to ensure only "${labelNameToUse}" is applied`);
-              }
-            }
-
-            console.log(`🏷️ Applying "${labelNameToUse}" label (ID: ${labelId}) to message ${messageId}...`);
-            const modifyRequest: any = {
-              userId: 'me',
-              id: messageId,
-              requestBody: {
-                addLabelIds: [labelId],
-              },
-            };
-
-            // Remove all other user-created labels to ensure only the selected label is applied
-            if (labelsToRemove.length > 0) {
-              modifyRequest.requestBody.removeLabelIds = labelsToRemove;
-              console.log(`🗑️ Removing ${labelsToRemove.length} user label(s) to ensure only "${labelNameToUse}" is applied`);
-            }
-
-            const modifyResponse = await gmail.users.messages.modify(modifyRequest);
-            console.log(`✅ "${labelNameToUse}" label applied successfully`);
-            console.log(`📧 Message labels after modification:`, modifyResponse.data.labelIds);
-
-            // Verify label was applied by fetching the message again
-            await new Promise(resolve => setTimeout(resolve, 500)); // Small delay to ensure Gmail processes the change
-            
-            const messageDetails = await gmail.users.messages.get({
-              userId: 'me',
-              id: messageId,
-              format: 'metadata',
-              metadataHeaders: ['Subject', 'To'],
-            });
-            const appliedLabels = messageDetails.data.labelIds || [];
-            console.log('🏷️ Final labels on email:', appliedLabels);
-            console.log('🏷️ Expected label ID:', labelId);
-            
-            if (appliedLabels.includes(labelId)) {
-              console.log(`✅ "${labelNameToUse}" label confirmed on sent email`);
-            } else {
-              console.error(`❌ "${labelNameToUse}" label NOT found after applying!`);
-              console.error('Expected label ID:', labelId);
-              console.error('Applied label IDs:', appliedLabels);
+          if (shouldApplyLabel && labelId && labelNameToUse) {
+            try {
+              // Get current labels on the message
+              const currentMessage = await gmail.users.messages.get({
+                userId: 'me',
+                id: messageId,
+                format: 'metadata',
+              });
+              const currentLabelIds = currentMessage.data.labelIds || [];
               
-              // Try to get label name from ID for debugging
-              try {
-                const labelsList = await gmail.users.labels.list({ userId: 'me' });
-                const labelInfo = labelsList.data.labels?.find((l: any) => l.id === labelId);
-                console.error('Label info:', labelInfo ? { id: labelInfo.id, name: labelInfo.name } : 'NOT FOUND');
-              } catch (e) {
-                console.error('Could not fetch label info:', e);
+              // Get all user-created labels to identify which ones to remove
+              const labelsList = await gmail.users.labels.list({ userId: 'me' });
+              const userLabels = labelsList.data.labels?.filter((l: any) => l.type === 'user') || [];
+              
+              // Find all user-created labels that are currently on the message (except the one we want to add)
+              const labelsToRemove: string[] = [];
+              for (const userLabel of userLabels) {
+                // Skip the label we want to keep
+                if (userLabel.id === labelId) {
+                  continue;
+                }
+                // If this user label is on the message, mark it for removal
+                if (currentLabelIds.includes(userLabel.id)) {
+                  labelsToRemove.push(userLabel.id);
+                  console.log(`🗑️ Will remove user label "${userLabel.name}" (ID: ${userLabel.id}) to ensure only "${labelNameToUse}" is applied`);
+                }
               }
+
+              console.log(`🏷️ Applying "${labelNameToUse}" label (ID: ${labelId}) to message ${messageId}...`);
+              const modifyRequest: any = {
+                userId: 'me',
+                id: messageId,
+                requestBody: {
+                  addLabelIds: [labelId],
+                },
+              };
+
+              // Remove all other user-created labels to ensure only the selected label is applied
+              if (labelsToRemove.length > 0) {
+                modifyRequest.requestBody.removeLabelIds = labelsToRemove;
+                console.log(`🗑️ Removing ${labelsToRemove.length} user label(s) to ensure only "${labelNameToUse}" is applied`);
+              }
+
+              const modifyResponse = await gmail.users.messages.modify(modifyRequest);
+              console.log(`✅ "${labelNameToUse}" label applied successfully`);
+              console.log(`📧 Message labels after modification:`, modifyResponse.data.labelIds);
+
+              // Verify label was applied by fetching the message again
+              await new Promise(resolve => setTimeout(resolve, 500)); // Small delay to ensure Gmail processes the change
+              
+              const messageDetails = await gmail.users.messages.get({
+                userId: 'me',
+                id: messageId,
+                format: 'metadata',
+                metadataHeaders: ['Subject', 'To'],
+              });
+              const appliedLabels = messageDetails.data.labelIds || [];
+              console.log('🏷️ Final labels on email:', appliedLabels);
+              console.log('🏷️ Expected label ID:', labelId);
+              
+              if (appliedLabels.includes(labelId)) {
+                console.log(`✅ "${labelNameToUse}" label confirmed on sent email`);
+                labelApplied = true;
+              } else {
+                console.error(`❌ "${labelNameToUse}" label NOT found after applying!`);
+                console.error('Expected label ID:', labelId);
+                console.error('Applied label IDs:', appliedLabels);
+                
+                // Try to get label name from ID for debugging
+                try {
+                  const labelsList = await gmail.users.labels.list({ userId: 'me' });
+                  const labelInfo = labelsList.data.labels?.find((l: any) => l.id === labelId);
+                  console.error('Label info:', labelInfo ? { id: labelInfo.id, name: labelInfo.name } : 'NOT FOUND');
+                } catch (e) {
+                  console.error('Could not fetch label info:', e);
+                }
+              }
+            } catch (labelError: any) {
+              console.error('❌ Error applying label:', labelError.message);
+              console.error('Label error details:', {
+                code: labelError.code,
+                response: labelError.response?.data,
+                messageId: messageId,
+                labelId: labelId,
+                labelName: labelNameToUse,
+              });
+              // Don't fail the entire operation - email was sent successfully
+              console.warn('⚠️ Email sent but label could not be applied');
             }
-          } catch (labelError: any) {
-            console.error('❌ Error applying label:', labelError.message);
-            console.error('Label error details:', {
-              code: labelError.code,
-              response: labelError.response?.data,
-              messageId: messageId,
-              labelId: labelId,
-              labelName: labelNameToUse,
-            });
-            // Don't fail the entire operation - email was sent successfully
-            console.warn('⚠️ Email sent but label could not be applied');
+          } else {
+            console.log('ℹ️ Skipping Gmail label application because no labelName was provided');
           }
           
           return res.json({
             success: true,
             messageId: sendResponse.data.id,
-            message: `Email sent successfully with "${labelNameToUse}" label${excelAttachment ? ' and Excel attachment' : ''}`,
+            message: labelApplied && labelNameToUse
+              ? `Email sent successfully with "${labelNameToUse}" label${excelAttachment ? ' and Excel attachment' : ''}`
+              : `Email sent successfully${excelAttachment ? ' with Excel attachment' : ''}`,
             method: 'gmail-api',
-            labelApplied: true,
-            labelName: labelNameToUse,
+            labelApplied,
+            labelName: labelApplied ? labelNameToUse : undefined,
             attachmentIncluded: !!excelAttachment,
             attachmentFilename: excelAttachment?.filename,
             details: {
@@ -922,9 +931,13 @@ export function registerPayoutRoutes(app: Express): void {
 
       // Send email
       console.log('📤 Attempting to send email...');
+      const smtpCcList = parseCcAddresses(request.cc);
+
       const mailOptions: any = {
         from: `"Dropshipper" <${process.env.SMTP_USER || 'shubhankarhaldar07@gmail.com'}>`,
         to: request.to,
+        // Optional CC for SMTP (array of emails)
+        ...(smtpCcList.length > 0 ? { cc: smtpCcList } : {}),
         subject: request.subject,
         text: request.content,
         // Add threading headers for SMTP to group emails in same conversation
@@ -997,32 +1010,14 @@ export function registerPayoutRoutes(app: Express): void {
         throw new Error('Email was not accepted by the server');
       }
 
-      // Try to apply label via Gmail API after SMTP send
-      let labelApplied = false;
-      if (gmail) {
-        try {
-          console.log('🏷️ Attempting to apply "Dropshipper" label to sent email...');
-          // Note: To apply labels to sent emails, we need the message ID from Gmail
-          // This is complex with SMTP, so we'll note it in the response
-          const labelId = await getOrCreateLabel(gmail, 'Dropshipper');
-          console.log(`✅ Label "Dropshipper" is available (ID: ${labelId})`);
-          // Note: We can't easily apply labels to SMTP-sent emails without the Gmail message ID
-          labelApplied = false;
-        } catch (labelError: any) {
-          console.error('⚠️ Could not apply label (this is expected with SMTP):', labelError.message);
-        }
-      }
-
       res.json({ 
         success: true, 
         messageId: info.messageId,
         accepted: info.accepted,
         rejected: info.rejected,
-        message: labelApplied 
-          ? `Email sent successfully with Dropshipper label${excelAttachment ? ' and Excel attachment' : ''}` 
-          : `Email sent successfully${excelAttachment ? ' with Excel attachment' : ''} (Note: To apply Gmail labels, please configure Gmail API OAuth2)`,
+        message: `Email sent successfully${excelAttachment ? ' with Excel attachment' : ''} (Note: Gmail labels only work when Gmail API is configured and a label is selected)`,
         method: 'smtp',
-        labelApplied: labelApplied,
+        labelApplied: false,
         attachmentIncluded: !!excelAttachment,
         attachmentFilename: excelAttachment?.filename,
         details: {
