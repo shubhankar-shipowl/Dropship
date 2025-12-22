@@ -580,7 +580,7 @@ export function registerPayoutRoutes(app: Express): void {
             const attachmentBase64 = excelAttachment.buffer.toString('base64');
             
             emailBody = [
-              `From: "Dropshipper" <${process.env.SMTP_USER || 'shubhankarhaldar07@gmail.com'}>`,
+              `From: "Shipowl Finance Team" <${process.env.SMTP_USER || 'shubhankarhaldar07@gmail.com'}>`,
               `To: ${request.to}`,
               ...(ccHeader ? [ccHeader] : []),
               `Subject: ${request.subject}`,
@@ -612,7 +612,7 @@ export function registerPayoutRoutes(app: Express): void {
       ${htmlContent}
     </div>
     <div class="footer">
-      <p>This is an automated email from Dropshipper.</p>
+      <p>This is an automated email from Shipowl Finance Team.</p>
       <p>If you have any questions, please contact the support team.</p>
     </div>
   </div>
@@ -631,7 +631,7 @@ export function registerPayoutRoutes(app: Express): void {
           } else {
             // Simple HTML email without attachment
             emailBody = [
-              `From: "Dropshipper" <${process.env.SMTP_USER || 'shubhankarhaldar07@gmail.com'}>`,
+              `From: "Shipowl Finance Team" <${process.env.SMTP_USER || 'shubhankarhaldar07@gmail.com'}>`,
               `To: ${request.to}`,
               ...(ccHeader ? [ccHeader] : []),
               `Subject: ${request.subject}`,
@@ -658,7 +658,7 @@ export function registerPayoutRoutes(app: Express): void {
       ${htmlContent}
     </div>
     <div class="footer">
-      <p>This is an automated email from Dropshipper.</p>
+      <p>This is an automated email from Shipowl Finance Team.</p>
       <p>If you have any questions, please contact the support team.</p>
     </div>
   </div>
@@ -934,7 +934,7 @@ export function registerPayoutRoutes(app: Express): void {
       const smtpCcList = parseCcAddresses(request.cc);
 
       const mailOptions: any = {
-        from: `"Dropshipper" <${process.env.SMTP_USER || 'shubhankarhaldar07@gmail.com'}>`,
+        from: `"Shipowl Finance Team" <${process.env.SMTP_USER || 'shubhankarhaldar07@gmail.com'}>`,
         to: request.to,
         // Optional CC for SMTP (array of emails)
         ...(smtpCcList.length > 0 ? { cc: smtpCcList } : {}),
@@ -966,7 +966,7 @@ export function registerPayoutRoutes(app: Express): void {
                 ${htmlContent}
               </div>
               <div class="footer">
-                <p>This is an automated email from Dropshipper.</p>
+                <p>This is an automated email from Shipowl Finance Team.</p>
                 <p>If you have any questions, please contact the support team.</p>
                 ${excelAttachment ? `<p><strong>Note:</strong> Please find the detailed payout report attached as an Excel file.</p>` : ''}
               </div>
@@ -1097,7 +1097,7 @@ export function registerPayoutRoutes(app: Express): void {
 
       // Send test email
       const info = await transporter.sendMail({
-        from: `"Dropshipper" <${process.env.SMTP_USER || 'shubhankarhaldar07@gmail.com'}>`,
+        from: `"Shipowl Finance Team" <${process.env.SMTP_USER || 'shubhankarhaldar07@gmail.com'}>`,
         to: to,
         subject: 'Test Email - Payout System',
         text: 'This is a test email from the Payout System. If you receive this, your SMTP configuration is working correctly.',
@@ -1380,7 +1380,7 @@ export function registerPayoutRoutes(app: Express): void {
           email: profile.data.emailAddress,
         },
         label: {
-          name: 'Dropshipper',
+          name: 'Shipowl Finance Team',
           id: labelId,
         },
         note: 'Labels will be applied automatically when sending emails via Gmail API'
