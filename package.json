@@ -10,7 +10,10 @@
     "check": "tsc",
     "db:push": "drizzle-kit push",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate"
+    "db:migrate": "drizzle-kit migrate",
+    "create-users-table": "tsx create-users-table.ts",
+    "add-user": "tsx add-user.ts",
+    "add-user-api": "tsx add-user-api.ts"
   },
   "dependencies": {
     "@google-cloud/storage": "^7.16.0",

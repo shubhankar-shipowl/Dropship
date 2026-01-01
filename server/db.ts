@@ -44,9 +44,38 @@ export const pool = mysql.createPool({
   queueLimit: 0,
   enableKeepAlive: true,
   keepAliveInitialDelay: 0,
-  // Note: timeout is handled per-query, not at pool level
+  // Connection timeout settings
+  connectTimeout: 60000, // 60 seconds
 });
+
 export const db = drizzle(pool, { schema, mode: 'default' });
+
+// Handle pool errors and connection resets
+pool.on('connection', (connection) => {
+  // Test connection with a simple query
+  connection.query('SELECT 1', (err) => {
+    if (err) {
+      console.warn('⚠️ Connection test failed:', err.message);
+    }
+  });
+
+  connection.on('error', (err: any) => {
+    if (err.code === 'PROTOCOL_CONNECTION_LOST' || err.code === 'ECONNRESET') {
+      console.warn('⚠️ Database connection lost, pool will provide a new connection');
+    } else if (err.fatal) {
+      console.error('❌ Fatal database connection error:', err.message);
+    } else {
+      console.error('❌ Database connection error:', err.message);
+    }
+  });
+});
+
+pool.on('error', (err: any) => {
+  console.error('❌ Database pool error:', err.message || err);
+  if (err.code === 'PROTOCOL_CONNECTION_LOST' || err.code === 'ECONNRESET') {
+    console.warn('⚠️ Database connection reset, pool will handle reconnection automatically');
+  }
+});
 
 // Connection lifecycle management
 let isConnected = false;

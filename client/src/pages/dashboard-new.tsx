@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Calculator, Settings, User, Download, Search, TrendingUp, Package, Truck, Coins, Database, Eye, RotateCcw, Calendar, Mail } from "lucide-react";
-import { Link } from "wouter";
+import { Calculator, Settings, User, Download, Search, TrendingUp, Package, Truck, Coins, Database, Eye, RotateCcw, Calendar, Mail, LogOut } from "lucide-react";
+import { Link, useLocation } from "wouter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -19,9 +19,15 @@ import { UploadHistory } from "@/components/upload-history";
 import ShippingCostBreakdown from "@/components/shipping-cost-breakdown";
 import PayoutEmailModal from "@/components/payout-email-modal";
 import { apiRequest } from "@/lib/queryClient";
+import { useAuth } from "@/contexts/AuthContext";
+import { useToast } from "@/hooks/use-toast";
 import type { PayoutSummary, PayoutRow } from "@shared/schema";
 
 export default function Dashboard() {
+  const { logout, user } = useAuth();
+  const [, setLocation] = useLocation();
+  const { toast } = useToast();
+
   // Current month default dates
   const getCurrentMonthDates = () => {
     const now = new Date();
@@ -33,6 +39,24 @@ export default function Dashboard() {
   };
 
   const { firstDay, lastDay } = getCurrentMonthDates();
+
+  // Handle logout
+  const handleLogout = async () => {
+    try {
+      await logout();
+      toast({
+        title: "Logged out",
+        description: "You have been successfully logged out.",
+      });
+      setLocation("/login");
+    } catch (error: any) {
+      toast({
+        title: "Logout failed",
+        description: error.message || "Failed to log out. Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
 
   const [orderDateFrom, setOrderDateFrom] = useState("2025-07-29");
   const [orderDateTo, setOrderDateTo] = useState("2025-08-12");
@@ -202,7 +226,16 @@ export default function Dashboard() {
                     <span className="xs:hidden sm:inline md:hidden">Data</span>
                   </Button>
                 </Link>
-                
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleLogout}
+                  className="w-full sm:w-auto gap-2 border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 px-3 py-2 sm:px-4 sm:py-2 rounded-lg sm:rounded-xl shadow-md font-semibold text-xs sm:text-sm"
+                  data-testid="button-logout"
+                >
+                  <LogOut className="h-4 w-4 sm:h-5 sm:w-5" />
+                  <span>Logout</span>
+                </Button>
               </div>
             </div>
           </div>

@@ -6,10 +6,12 @@ import { registerSettingsRoutes } from "./routes/settings";
 import { registerAnalyticsRoutes } from "./routes/analytics";
 import { registerRtsRtoRoutes } from "./routes/rts-rto";
 import { registerTransparencyRoutes } from "./routes/transparency";
+import { registerAuthRoutes } from "./routes/auth";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   
   // Register all route modules
+  registerAuthRoutes(app);
   registerUploadRoutes(app);
   registerPayoutRoutes(app);
   registerSettingsRoutes(app);

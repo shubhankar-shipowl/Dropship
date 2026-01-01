@@ -4,6 +4,16 @@ import { relations } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
+// Users Table for Authentication
+export const users = mysqlTable("users", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`UUID()`),
+  username: varchar("username", { length: 255 }).notNull().unique(),
+  email: varchar("email", { length: 255 }).notNull().unique(),
+  password: text("password").notNull(), // Store hashed password
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+});
+
 // Upload Data
 export const uploadSessions = mysqlTable("upload_sessions", {
   id: varchar("id", { length: 36 }).primaryKey().default(sql`UUID()`),
@@ -149,6 +159,13 @@ export const insertPayoutLogSchema = createInsertSchema(payoutLog).omit({
 export const insertRtsRtoReconciliationSchema = createInsertSchema(rtsRtoReconciliation).omit({
   id: true,
   reconciledOn: true,
+});
+
+// User Insert Schema
+export const insertUserSchema = createInsertSchema(users).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
 });
 
 // Types
@@ -314,3 +331,6 @@ export type InsertSettlementSettings = z.infer<typeof insertSettlementSettingsSc
 
 export type SettlementExport = typeof settlementExports.$inferSelect;
 export type InsertSettlementExport = z.infer<typeof insertSettlementExportSchema>;
+
+export type User = typeof users.$inferSelect;
+export type InsertUser = z.infer<typeof insertUserSchema>;
