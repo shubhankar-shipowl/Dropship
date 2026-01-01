@@ -69,6 +69,10 @@ temp/
 *.sqlite3
 *.db
 
+# Database backups
+backups/
+*.sql
+
 # Python (if using any Python tools)
 __pycache__/
 *.py[cod]
