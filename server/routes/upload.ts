@@ -39,7 +39,117 @@ const upload = multer({
   },
 });
 
-// ... (keep COLUMN_MAPPINGS and helper functions) ...
+// Column mapping for case-insensitive auto-detection
+const COLUMN_MAPPINGS = {
+  dropshipperEmail: ['dropshipper email', 'order account', 'account', 'email'],
+  orderId: [
+    'order id',
+    'orderid',
+    'channel order number',
+    'ref',
+    'invoice #',
+    'invoice number',
+  ],
+  orderDate: ['order date', 'channel order date', 'date'],
+  waybill: ['waybill', 'wayball number', 'tracking number', 'awb'],
+  productName: ['product name', 'product', 'item name'],
+  sku: ['sku', 'client order id', 'product code'],
+  qty: ['product qty', 'qty', 'quantity'],
+  productValue: [
+    'product value',
+    'productvalue',
+    'product_value',
+    'cod amount',
+    'cod',
+    'amount',
+    'total',
+    'order total',
+    'order amount',
+    'cod amt',
+    'customer amount',
+    'payment amount',
+    'final amount',
+    'bill amount',
+  ],
+  mode: [
+    'mode',
+    'payment mode',
+    'payment type',
+    'order mode',
+    'type',
+    'cod/prepaid',
+  ],
+  status: ['status', 'order status'],
+  deliveredDate: ['delivered date', 'delivery date'],
+  rtsDate: ['rts date', 'return date'],
+  shippingProvider: [
+    'fulfilled by',
+    'courier company',
+    'shipping provider',
+    'provider',
+  ],
+};
+
+function mapColumns(headers: string[]): Record<string, number> {
+  const mapping: Record<string, number> = {};
+
+  for (const [field, variations] of Object.entries(COLUMN_MAPPINGS)) {
+    // First try exact matches (for better priority)
+    for (let i = 0; i < headers.length; i++) {
+      const header = headers[i].toLowerCase().trim();
+      if (variations.some((variation) => header === variation)) {
+        mapping[field] = i;
+        break;
+      }
+    }
+
+    // If no exact match, try contains match
+    if (!(field in mapping)) {
+      for (let i = 0; i < headers.length; i++) {
+        const header = headers[i].toLowerCase().trim();
+        if (variations.some((variation) => header.includes(variation))) {
+          mapping[field] = i;
+          break;
+        }
+      }
+    }
+  }
+
+  return mapping;
+}
+
+function parseDate(dateStr: string): Date | null {
+  if (!dateStr || dateStr.trim() === '') return null;
+
+  // Handle multiple date formats to avoid parsing errors
+  const cleanDateStr = String(dateStr).trim();
+
+  // Try different date formats commonly used in Excel
+  const formats = [
+    cleanDateStr, // Direct parse
+    cleanDateStr.replace(/(\d+)-(\d+)-(\d+)/, '$3-$2-$1'), // DD-MM-YYYY to YYYY-MM-DD
+    cleanDateStr.replace(/(\d+)\/(\d+)\/(\d+)/, '$3-$2-$1'), // DD/MM/YYYY to YYYY-MM-DD
+  ];
+
+  for (const format of formats) {
+    const date = new Date(format);
+    if (!isNaN(date.getTime()) && date.getFullYear() > 1900) {
+      return date;
+    }
+  }
+
+  // If all parsing fails, log for debugging but return null
+  console.log(`Failed to parse date: "${dateStr}"`);
+  return null;
+}
+
+function generateProductUid(
+  sku: string | null,
+  productName: string,
+  dropshipperEmail: string,
+): string {
+  return `${dropshipperEmail}${productName.trim()}`;
+}
 
 // Helper to cleanup files
 import fs from 'fs';
@@ -53,7 +163,29 @@ const cleanupFile = (path: string) => {
   }
 };
 
-// ... (keep generateProductUid and registerUploadRoutes start) ...
+export function registerUploadRoutes(app: Express): void {
+  // Enhanced error handling middleware
+  const handleUploadError = (err: any, req: any, res: any, next: any) => {
+    console.error('Upload error:', err);
+    if (err instanceof multer.MulterError) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res
+          .status(400)
+          .json({ message: 'File too large. Maximum size is 200MB.' });
+      }
+      if (err.code === 'LIMIT_UNEXPECTED_FILE') {
+        return res.status(400).json({
+          message: 'Unexpected file field. Please upload only one file.',
+        });
+      }
+    }
+    if (err.message.includes('Invalid file type')) {
+      return res.status(400).json({ message: err.message });
+    }
+    return res
+      .status(500)
+      .json({ message: 'File upload failed. Please try again.' });
+  };
 
   // Preview file headers for manual mapping
   app.post(
