@@ -217,7 +217,10 @@ export function registerUploadRoutes(app: Express): void {
           originalname.endsWith('.xls')
         ) {
           console.log('Processing Excel file...');
-          const workbook = XLSX.readFile(filePath, { 
+          // Use explicit fs.readFileSync to avoid bundling issues with XLSX.readFile
+          const fileBuffer = fs.readFileSync(filePath);
+          const workbook = XLSX.read(fileBuffer, { 
+             type: 'buffer',
              dense: true, // Optimize memory usage
              cellDates: false, 
              cellNF: false, // Disable expensive formatting unless needed
@@ -348,8 +351,10 @@ export function registerUploadRoutes(app: Express): void {
           originalname.endsWith('.xls')
         ) {
           // Use options that preserve cell text for waybill numbers
-          const workbook = XLSX.readFile(filePath, {
-            // type: 'buffer', // Removed as we read from file
+          // Use explicit fs.readFileSync to avoid bundling issues with XLSX.readFile
+          const fileBuffer = fs.readFileSync(filePath);
+          const workbook = XLSX.read(fileBuffer, {
+            type: 'buffer',
             cellDates: false, // Disable date parsing for speed
             cellNF: true, // Enable number format parsing to get formatted text
             cellText: true, // Enable text formatting to preserve waybill numbers
