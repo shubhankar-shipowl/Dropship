@@ -36,7 +36,7 @@ module.exports = {
       log_type: 'json',
       
       // Process Management - Enhanced
-      max_memory_restart: '2G', // Increased for large file processing
+      max_memory_restart: '4G', // Increased for large file processing
       min_uptime: '30s', // Longer minimum uptime
       max_restarts: 15, // More restart attempts
       restart_delay: 4000, // Delay between restarts
@@ -75,7 +75,7 @@ module.exports = {
       
       // Node.js Process Arguments
       node_args: [
-        '--max-old-space-size=2048',
+        '--max-old-space-size=4096',
         '--optimize-for-size'
       ],
       
