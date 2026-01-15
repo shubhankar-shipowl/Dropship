@@ -13,6 +13,7 @@ import PayoutDataTable from "@/components/payout-data-table";
 import SettingsDialog from "@/components/settings-dialog";
 import SettingsUpload from "@/components/settings-upload";
 import DataReset from "@/components/data-reset";
+import GmailSettings from "@/components/gmail-settings";
 import MissingDataDisplay from "@/components/missing-data-display";
 import AnalyticsDashboard from "@/components/analytics-dashboard";
 import { UploadHistory } from "@/components/upload-history";
@@ -546,6 +547,24 @@ export default function Dashboard() {
 
           {/* Settings Tab */}
           <TabsContent value="settings" className="space-y-4 md:space-y-6">
+            {/* Gmail Settings - Full Width */}
+            <div className="mx-2 md:mx-0">
+              <Card className="bg-white rounded-xl md:rounded-2xl shadow-xl border border-gray-100">
+                <CardHeader className="bg-gradient-to-r from-blue-50 to-cyan-50 rounded-t-xl md:rounded-t-2xl p-4 md:p-6">
+                  <CardTitle className="text-lg md:text-xl font-bold text-gray-800 flex items-center gap-2">
+                    <Mail className="h-5 w-5 md:h-6 md:w-6 text-blue-600" />
+                    Gmail API Integration
+                  </CardTitle>
+                  <CardDescription className="text-sm md:text-base text-gray-600">
+                    Connect Gmail to send emails with labels
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="p-4 md:p-6">
+                  <GmailSettings />
+                </CardContent>
+              </Card>
+            </div>
+
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6 mx-2 md:mx-0">
               <Card className="bg-white rounded-xl md:rounded-2xl shadow-xl border border-gray-100">
                 <CardHeader className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-t-xl md:rounded-t-2xl p-4 md:p-6">

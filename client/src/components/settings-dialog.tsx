@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Plus, Upload, Edit, Trash2, X } from "lucide-react";
+import { Plus, Upload, Edit, Trash2, X, Mail } from "lucide-react";
+import GmailSettings from "./gmail-settings";
 import {
   Dialog,
   DialogContent,
@@ -212,12 +213,16 @@ export default function SettingsDialog({
         </DialogHeader>
 
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="grid w-full grid-cols-2">
+          <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="product-prices" data-testid="tab-product-prices">
               Product Prices
             </TabsTrigger>
             <TabsTrigger value="shipping-rates" data-testid="tab-shipping-rates">
               Shipping Rates
+            </TabsTrigger>
+            <TabsTrigger value="gmail-settings" data-testid="tab-gmail-settings" className="gap-1">
+              <Mail className="h-4 w-4" />
+              Gmail
             </TabsTrigger>
           </TabsList>
 
@@ -557,6 +562,11 @@ export default function SettingsDialog({
                 </TableBody>
               </Table>
             </div>
+          </TabsContent>
+
+          {/* Gmail Settings Tab */}
+          <TabsContent value="gmail-settings" className="space-y-4">
+            <GmailSettings />
           </TabsContent>
         </Tabs>
       </DialogContent>

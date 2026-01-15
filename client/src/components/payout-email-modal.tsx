@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Mail, Send, X, Plus, Tag } from "lucide-react";
+import { Mail, Send, X, Plus, Tag, CheckCircle2, AlertCircle } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -19,6 +19,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import type { PayoutSummary } from "@shared/schema";
 
@@ -52,6 +53,7 @@ export default function PayoutEmailModal({
   const [showNewLabelInput, setShowNewLabelInput] = useState(false);
   const [isLoadingLabels, setIsLoadingLabels] = useState(false);
   const [isCreatingLabel, setIsCreatingLabel] = useState(false);
+  const [gmailConnected, setGmailConnected] = useState<boolean | null>(null);
   
   // Store the selected label in a ref to track changes - ALWAYS use this as source of truth
   const selectedLabelRef = useRef<string>("");
@@ -135,15 +137,24 @@ Payout Team`;
   const loadLabels = async () => {
     setIsLoadingLabels(true);
     try {
-      const response = await fetch('/api/gmail-labels');
-      const data = await response.json();
-      
-      if (data.success && data.labels) {
-        setLabels(data.labels);
-        // We no longer auto-select any default label in the UI
+      // Check Gmail connection status first
+      const statusResponse = await fetch('/api/gmail/status');
+      const statusData = await statusResponse.json();
+      setGmailConnected(statusData.status?.authorized === true);
+
+      // Only load labels if connected
+      if (statusData.status?.authorized) {
+        const response = await fetch('/api/gmail-labels');
+        const data = await response.json();
+        
+        if (data.success && data.labels) {
+          setLabels(data.labels);
+          // We no longer auto-select any default label in the UI
+        }
       }
     } catch (error) {
       console.error('Error loading labels:', error);
+      setGmailConnected(false);
       // Don't show error toast - labels are optional
     } finally {
       setIsLoadingLabels(false);
@@ -345,12 +356,41 @@ Payout Team`;
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[600px] max-h-[90vh] flex flex-col">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Mail className="h-5 w-5" />
-            Send Payout Email
-          </DialogTitle>
+          <div className="flex items-center justify-between">
+            <DialogTitle className="flex items-center gap-2">
+              <Mail className="h-5 w-5" />
+              Send Payout Email
+            </DialogTitle>
+            {gmailConnected !== null && (
+              <Badge
+                variant={gmailConnected ? "default" : "secondary"}
+                className={
+                  gmailConnected
+                    ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 text-xs"
+                    : "text-xs"
+                }
+              >
+                {gmailConnected ? (
+                  <>
+                    <CheckCircle2 className="h-3 w-3 mr-1" />
+                    Gmail API
+                  </>
+                ) : (
+                  <>
+                    <AlertCircle className="h-3 w-3 mr-1" />
+                    SMTP Fallback
+                  </>
+                )}
+              </Badge>
+            )}
+          </div>
           <DialogDescription>
             Review and edit the email before sending to the dropshipper
+            {!gmailConnected && gmailConnected !== null && (
+              <span className="block mt-1 text-amber-600 dark:text-amber-400 text-xs">
+                Gmail API not connected - labels won't be applied. Go to Settings → Gmail to authorize.
+              </span>
+            )}
           </DialogDescription>
         </DialogHeader>
         {/* Scrollable body so actions stay visible at the bottom */}

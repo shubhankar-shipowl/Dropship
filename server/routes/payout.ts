@@ -3,7 +3,7 @@ import { storage } from "../storage";
 import { z } from "zod";
 import * as XLSX from 'xlsx';
 import nodemailer from 'nodemailer';
-import { google } from 'googleapis';
+import { gmailService } from '../services/gmail';
 
 // Helper function to generate Excel workbook buffer
 async function generatePayoutExcelBuffer(request: {
@@ -216,119 +216,8 @@ async function generatePayoutExcelBuffer(request: {
   return { buffer, filename };
 }
 
-// Helper function to get or create Gmail label
-async function getOrCreateLabel(gmail: any, labelName: string): Promise<string> {
-  try {
-    const labelNameTrimmed = labelName.trim();
-    if (!labelNameTrimmed) {
-      throw new Error('Label name cannot be empty');
-    }
-
-    // List all labels
-    const response = await gmail.users.labels.list({
-      userId: 'me',
-    });
-
-    // Check if label exists (case-insensitive and trimmed comparison, only user labels)
-    const existingLabel = response.data.labels?.find(
-      (label: any) => label.type === 'user' && label.name.trim().toLowerCase() === labelNameTrimmed.toLowerCase()
-    );
-
-    if (existingLabel) {
-      console.log(`✅ Found existing label "${labelNameTrimmed}" with ID: ${existingLabel.id}`);
-      return existingLabel.id;
-    }
-
-    // Create new label if it doesn't exist
-    console.log(`📝 Creating new label "${labelNameTrimmed}"...`);
-    const createResponse = await gmail.users.labels.create({
-      userId: 'me',
-      requestBody: {
-        name: labelNameTrimmed,
-        labelListVisibility: 'labelShow',
-        messageListVisibility: 'show',
-      },
-    });
-
-    const newLabelId = createResponse.data.id;
-    if (!newLabelId) {
-      throw new Error('Failed to create label - no ID returned');
-    }
-
-    console.log(`✅ Created label "${labelNameTrimmed}" with ID: ${newLabelId}`);
-    return newLabelId;
-  } catch (error: any) {
-    console.error(`❌ Error managing label "${labelName}":`, error);
-    console.error('Error details:', {
-      message: error.message,
-      code: error.code,
-      response: error.response?.data,
-    });
-    throw error;
-  }
-}
-
-// Helper function to get Gmail API client using OAuth2
-async function getGmailClient() {
-  // Check if OAuth2 credentials are configured
-  if (!process.env.GMAIL_CLIENT_ID || !process.env.GMAIL_CLIENT_SECRET) {
-    console.log('ℹ️ Gmail API OAuth2 not configured, using SMTP fallback');
-    return null;
-  }
-
-  const oauth2Client = new google.auth.OAuth2(
-    process.env.GMAIL_CLIENT_ID,
-    process.env.GMAIL_CLIENT_SECRET,
-    process.env.GMAIL_REDIRECT_URI || 'urn:ietf:wg:oauth:2.0:oob'
-  );
-
-  // Refresh token is required for Gmail API to work server-side
-  // Without it, we cannot authenticate and must use SMTP fallback
-  if (!process.env.GMAIL_REFRESH_TOKEN) {
-    console.log('ℹ️ Gmail API refresh token not configured - Gmail API requires refresh token for server-side authentication');
-    console.log('ℹ️ Using SMTP fallback (labels will not be applied)');
-    return null;
-  }
-
-  // Set credentials with refresh token
-  oauth2Client.setCredentials({
-    refresh_token: process.env.GMAIL_REFRESH_TOKEN,
-  });
-
-  // The OAuth2 client will automatically refresh the access token when needed
-  // We don't need to manually refresh it here - it will be done on first API call
-  
-  return google.gmail({ version: 'v1', auth: oauth2Client });
-}
-
-// Helper function to find existing thread for the same recipient and subject
-async function findExistingThread(gmail: any, recipient: string, subjectPrefix: string): Promise<string | null> {
-  try {
-    // Search for existing emails to the same recipient with similar subject
-    // Gmail search query: find sent emails to this recipient with subject containing "Payout Statement"
-    const query = `to:${recipient} subject:"${subjectPrefix}"`;
-    console.log(`🔍 Searching for existing thread with query: ${query}`);
-    
-    const searchResponse = await gmail.users.messages.list({
-      userId: 'me',
-      q: query,
-      maxResults: 1, // We only need the most recent one
-    });
-
-    const messages = searchResponse.data.messages || [];
-    if (messages.length > 0 && messages[0].threadId) {
-      console.log(`✅ Found existing thread: ${messages[0].threadId}`);
-      return messages[0].threadId;
-    }
-
-    console.log('ℹ️ No existing thread found - will create new thread');
-    return null;
-  } catch (error: any) {
-    console.error('⚠️ Error searching for existing thread:', error.message);
-    // Don't throw - just return null and create a new thread
-    return null;
-  }
-}
+// Helper function uses gmailService from services/gmail.ts
+// All Gmail OAuth2 functionality is now handled by the centralized service
 
 export function registerPayoutRoutes(app: Express): void {
   // Get all dropshippers
@@ -500,64 +389,11 @@ export function registerPayoutRoutes(app: Express): void {
         }
       }
 
-      // Try to use Gmail API first (if OAuth2 is configured)
-      console.log('🔍 Checking Gmail API configuration...');
-      console.log('Gmail API config:', {
-        hasClientId: !!process.env.GMAIL_CLIENT_ID,
-        hasClientSecret: !!process.env.GMAIL_CLIENT_SECRET,
-        hasRefreshToken: !!process.env.GMAIL_REFRESH_TOKEN,
-        redirectUri: process.env.GMAIL_REDIRECT_URI || 'urn:ietf:wg:oauth:2.0:oob',
-      });
+      // Try to use Gmail API first (if authorized via cred.json + token.json)
+      const gmailClient = await gmailService.getGmailClient();
       
-      let gmail: any = null;
-      try {
-        gmail = await getGmailClient();
-        if (gmail) {
-          console.log('✅ Gmail API client created successfully');
-        } else {
-          console.log('⚠️ Gmail API client is null - will use SMTP');
-        }
-      } catch (gmailClientError: any) {
-        console.error('❌ Error creating Gmail API client:', gmailClientError.message);
-        console.error('Will fall back to SMTP');
-        gmail = null;
-      }
-      
-      if (gmail) {
+      if (gmailClient) {
         try {
-          console.log('📧 Using Gmail API to send email...');
-          console.log('🔍 Gmail API client initialized, checking label configuration...');
-          
-          // Determine if we should apply a Gmail label
-          console.log('='.repeat(60));
-          console.log('📧 EMAIL SEND REQUEST RECEIVED');
-          console.log('🏷️ Raw request.labelName:', JSON.stringify(request.labelName));
-          console.log('🏷️ Type of request.labelName:', typeof request.labelName);
-          console.log('🏷️ Is request.labelName undefined?', request.labelName === undefined);
-          console.log('🏷️ Is request.labelName null?', request.labelName === null);
-          console.log('🏷️ Is request.labelName empty string?', request.labelName === '');
-          
-          const receivedLabelName = request.labelName ? String(request.labelName).trim() : '';
-          const shouldApplyLabel = !!receivedLabelName;
-          let labelNameToUse: string | null = null;
-          let labelId: string | null = null;
-          
-          if (shouldApplyLabel) {
-            labelNameToUse = receivedLabelName;
-            console.log('🏷️ Label name after processing:', JSON.stringify(receivedLabelName));
-            console.log('🏷️ Will apply Gmail label:', JSON.stringify(labelNameToUse));
-            
-            console.log(`🔍 Getting or creating label "${labelNameToUse}"...`);
-            labelId = await getOrCreateLabel(gmail, labelNameToUse);
-            
-            if (!labelId) {
-              throw new Error(`Failed to get or create label "${labelNameToUse}" - no label ID returned`);
-            }
-            
-            console.log(`✅ Label ID obtained: ${labelId} for label "${labelNameToUse}"`);
-          } else {
-            console.log('ℹ️ No labelName provided – email will be sent via Gmail API without applying any user label');
-          }
           
           // Convert plain text to HTML with better formatting
           const htmlContent = request.content
@@ -569,281 +405,90 @@ export function registerPayoutRoutes(app: Express): void {
             .replace(/^FINAL PAYABLE:/gm, '<h2 style="color: #16a34a; margin-top: 20px;">FINAL PAYABLE:</h2>')
             .replace(/^Order Statistics:/gm, '<h3 style="color: #7c3aed; margin-top: 15px;">Order Statistics:</h3>');
 
-          // Create multipart email with attachment if Excel file is available
-          let emailBody: string;
+          // Build styled HTML email body
+          const styledHtmlBody = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { background-color: #2563eb; color: white; padding: 15px; border-radius: 5px; margin-bottom: 20px; }
+    .content { background-color: #f9fafb; padding: 20px; border-radius: 5px; }
+    .footer { margin-top: 20px; padding-top: 20px; border-top: 1px solid #ddd; color: #666; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1 style="margin: 0;">Payout Statement</h1>
+    </div>
+    <div class="content">
+      ${htmlContent}
+    </div>
+    <div class="footer">
+      <p>This is an automated email from Shipowl Finance Team.</p>
+      <p>If you have any questions, please contact the support team.</p>
+    </div>
+  </div>
+</body>
+</html>`;
+
+          // Parse CC addresses
           const ccList = parseCcAddresses(request.cc);
-          const ccHeader = ccList.length > 0 ? `Cc: ${ccList.join(', ')}` : '';
+          const labelNameToUse = request.labelName ? String(request.labelName).trim() : undefined;
 
-          if (excelAttachment) {
-            // Multipart email with attachment
-            const boundary = `----=_Part_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-            const attachmentBase64 = excelAttachment.buffer.toString('base64');
-            
-            emailBody = [
-              `From: "Shipowl Finance Team" <${process.env.SMTP_USER || 'shubhankarhaldar07@gmail.com'}>`,
-              `To: ${request.to}`,
-              ...(ccHeader ? [ccHeader] : []),
-              `Subject: ${request.subject}`,
-              `MIME-Version: 1.0`,
-              `Content-Type: multipart/mixed; boundary="${boundary}"`,
-              '',
-              `--${boundary}`,
-              `Content-Type: text/html; charset=utf-8`,
-              `Content-Transfer-Encoding: 7bit`,
-              '',
-              `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <style>
-    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-    .header { background-color: #2563eb; color: white; padding: 15px; border-radius: 5px; margin-bottom: 20px; }
-    .content { background-color: #f9fafb; padding: 20px; border-radius: 5px; }
-    .footer { margin-top: 20px; padding-top: 20px; border-top: 1px solid #ddd; color: #666; font-size: 12px; }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="header">
-      <h1 style="margin: 0;">Payout Statement</h1>
-    </div>
-    <div class="content">
-      ${htmlContent}
-    </div>
-    <div class="footer">
-      <p>This is an automated email from Shipowl Finance Team.</p>
-      <p>If you have any questions, please contact the support team.</p>
-    </div>
-  </div>
-</body>
-</html>`,
-              '',
-              `--${boundary}`,
-              `Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`,
-              `Content-Disposition: attachment; filename="${excelAttachment.filename}"`,
-              `Content-Transfer-Encoding: base64`,
-              '',
-              attachmentBase64,
-              '',
-              `--${boundary}--`
-            ].join('\r\n');
-          } else {
-            // Simple HTML email without attachment
-            emailBody = [
-              `From: "Shipowl Finance Team" <${process.env.SMTP_USER || 'shubhankarhaldar07@gmail.com'}>`,
-              `To: ${request.to}`,
-              ...(ccHeader ? [ccHeader] : []),
-              `Subject: ${request.subject}`,
-              'Content-Type: text/html; charset=utf-8',
-              '',
-              `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <style>
-    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-    .header { background-color: #2563eb; color: white; padding: 15px; border-radius: 5px; margin-bottom: 20px; }
-    .content { background-color: #f9fafb; padding: 20px; border-radius: 5px; }
-    .footer { margin-top: 20px; padding-top: 20px; border-top: 1px solid #ddd; color: #666; font-size: 12px; }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="header">
-      <h1 style="margin: 0;">Payout Statement</h1>
-    </div>
-    <div class="content">
-      ${htmlContent}
-    </div>
-    <div class="footer">
-      <p>This is an automated email from Shipowl Finance Team.</p>
-      <p>If you have any questions, please contact the support team.</p>
-    </div>
-  </div>
-</body>
-</html>`
-            ].join('\r\n');
-          }
-
-          const encodedEmail = Buffer.from(emailBody)
-            .toString('base64')
-            .replace(/\+/g, '-')
-            .replace(/\//g, '_')
-            .replace(/=+$/, '');
-
-          // Find existing thread for email threading (so emails appear in same conversation)
-          const subjectPrefix = request.subject.includes('Payout Statement') 
-            ? 'Payout Statement' 
-            : request.subject.substring(0, 30);
-          const existingThreadId = await findExistingThread(gmail, request.to, subjectPrefix);
-
-          // Send email first (without labelIds - it doesn't work reliably for user labels)
-          console.log(`📤 Sending email via Gmail API...`);
-          const sendRequest: any = {
-            userId: 'me',
-            requestBody: {
-              raw: encodedEmail,
-            },
-          };
-
-          // Add threadId if we found an existing thread (this groups emails into same conversation)
-          if (existingThreadId) {
-            sendRequest.requestBody.threadId = existingThreadId;
-            console.log(`🔗 Using existing thread ID: ${existingThreadId} (emails will be grouped)`);
-          }
-
-          const sendResponse = await gmail.users.messages.send(sendRequest);
-
-          const messageId = sendResponse.data.id;
-          if (!messageId) {
-            throw new Error('No message ID returned from Gmail API');
-          }
-
-          console.log('✅ Email sent via Gmail API');
-          console.log('📧 Message ID:', messageId);
-
-          let labelApplied = false;
-
-          // Apply label AFTER sending (this is the correct way for user-created labels)
-          if (shouldApplyLabel && labelId && labelNameToUse) {
-            try {
-              // Get current labels on the message
-              const currentMessage = await gmail.users.messages.get({
-                userId: 'me',
-                id: messageId,
-                format: 'metadata',
-              });
-              const currentLabelIds = currentMessage.data.labelIds || [];
-              
-              // Get all user-created labels to identify which ones to remove
-              const labelsList = await gmail.users.labels.list({ userId: 'me' });
-              const userLabels = labelsList.data.labels?.filter((l: any) => l.type === 'user') || [];
-              
-              // Find all user-created labels that are currently on the message (except the one we want to add)
-              const labelsToRemove: string[] = [];
-              for (const userLabel of userLabels) {
-                // Skip the label we want to keep
-                if (userLabel.id === labelId) {
-                  continue;
-                }
-                // If this user label is on the message, mark it for removal
-                if (currentLabelIds.includes(userLabel.id)) {
-                  labelsToRemove.push(userLabel.id);
-                  console.log(`🗑️ Will remove user label "${userLabel.name}" (ID: ${userLabel.id}) to ensure only "${labelNameToUse}" is applied`);
-                }
-              }
-
-              console.log(`🏷️ Applying "${labelNameToUse}" label (ID: ${labelId}) to message ${messageId}...`);
-              const modifyRequest: any = {
-                userId: 'me',
-                id: messageId,
-                requestBody: {
-                  addLabelIds: [labelId],
-                },
-              };
-
-              // Remove all other user-created labels to ensure only the selected label is applied
-              if (labelsToRemove.length > 0) {
-                modifyRequest.requestBody.removeLabelIds = labelsToRemove;
-                console.log(`🗑️ Removing ${labelsToRemove.length} user label(s) to ensure only "${labelNameToUse}" is applied`);
-              }
-
-              const modifyResponse = await gmail.users.messages.modify(modifyRequest);
-              console.log(`✅ "${labelNameToUse}" label applied successfully`);
-              console.log(`📧 Message labels after modification:`, modifyResponse.data.labelIds);
-
-              // Verify label was applied by fetching the message again
-              await new Promise(resolve => setTimeout(resolve, 500)); // Small delay to ensure Gmail processes the change
-              
-              const messageDetails = await gmail.users.messages.get({
-                userId: 'me',
-                id: messageId,
-                format: 'metadata',
-                metadataHeaders: ['Subject', 'To'],
-              });
-              const appliedLabels = messageDetails.data.labelIds || [];
-              console.log('🏷️ Final labels on email:', appliedLabels);
-              console.log('🏷️ Expected label ID:', labelId);
-              
-              if (appliedLabels.includes(labelId)) {
-                console.log(`✅ "${labelNameToUse}" label confirmed on sent email`);
-                labelApplied = true;
-              } else {
-                console.error(`❌ "${labelNameToUse}" label NOT found after applying!`);
-                console.error('Expected label ID:', labelId);
-                console.error('Applied label IDs:', appliedLabels);
-                
-                // Try to get label name from ID for debugging
-                try {
-                  const labelsList = await gmail.users.labels.list({ userId: 'me' });
-                  const labelInfo = labelsList.data.labels?.find((l: any) => l.id === labelId);
-                  console.error('Label info:', labelInfo ? { id: labelInfo.id, name: labelInfo.name } : 'NOT FOUND');
-                } catch (e) {
-                  console.error('Could not fetch label info:', e);
-                }
-              }
-            } catch (labelError: any) {
-              console.error('❌ Error applying label:', labelError.message);
-              console.error('Label error details:', {
-                code: labelError.code,
-                response: labelError.response?.data,
-                messageId: messageId,
-                labelId: labelId,
-                labelName: labelNameToUse,
-              });
-              // Don't fail the entire operation - email was sent successfully
-              console.warn('⚠️ Email sent but label could not be applied');
-            }
-          } else {
-            console.log('ℹ️ Skipping Gmail label application because no labelName was provided');
-          }
-          
-          return res.json({
-            success: true,
-            messageId: sendResponse.data.id,
-            message: labelApplied && labelNameToUse
-              ? `Email sent successfully with "${labelNameToUse}" label${excelAttachment ? ' and Excel attachment' : ''}`
-              : `Email sent successfully${excelAttachment ? ' with Excel attachment' : ''}`,
-            method: 'gmail-api',
-            labelApplied,
-            labelName: labelApplied ? labelNameToUse : undefined,
-            attachmentIncluded: !!excelAttachment,
-            attachmentFilename: excelAttachment?.filename,
-            details: {
-              to: request.to,
-              subject: request.subject,
-              timestamp: new Date().toISOString(),
-            }
+          // Send email via Gmail service
+          const result = await gmailService.sendEmail({
+            to: request.to,
+            cc: ccList.length > 0 ? ccList : undefined,
+            subject: request.subject,
+            htmlBody: styledHtmlBody,
+            textBody: request.content,
+            attachment: excelAttachment ? {
+              filename: excelAttachment.filename,
+              content: excelAttachment.buffer,
+              contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            } : undefined,
+            labelName: labelNameToUse,
           });
+
+          if (result.success) {
+            return res.json({
+              success: true,
+              messageId: result.messageId,
+              message: result.labelApplied && labelNameToUse
+                ? `Email sent successfully with "${labelNameToUse}" label${excelAttachment ? ' and Excel attachment' : ''}`
+                : `Email sent successfully${excelAttachment ? ' with Excel attachment' : ''}`,
+              method: 'gmail-api',
+              labelApplied: result.labelApplied,
+              labelName: result.labelApplied ? labelNameToUse : undefined,
+              attachmentIncluded: !!excelAttachment,
+              attachmentFilename: excelAttachment?.filename,
+              details: {
+                to: request.to,
+                subject: request.subject,
+                timestamp: new Date().toISOString(),
+              }
+            });
+          } else {
+            throw new Error(result.error || 'Failed to send email via Gmail API');
+          }
         } catch (gmailError: any) {
-          console.error('❌ Gmail API error, falling back to SMTP:', gmailError);
-          console.error('Gmail API error details:', {
-            message: gmailError.message,
-            code: gmailError.code,
-            response: gmailError.response?.data,
-            status: gmailError.response?.status,
-            errors: gmailError.errors,
-            stack: gmailError.stack,
-          });
+          console.error('❌ Gmail API error, falling back to SMTP:', gmailError.message);
           
           // If it's an authentication error, provide specific guidance
-          if (gmailError.code === 401 || gmailError.code === 403) {
-            console.error('⚠️ Gmail API authentication failed. Please check your refresh token.');
-            console.error('💡 Try regenerating the refresh token:');
-            console.error('   1. Visit: http://localhost:3007/api/gmail-oauth-setup');
-            console.error('   2. Get new authorization code');
-            console.error('   3. Exchange for new refresh token');
-            console.error('   4. Update .env and restart server');
+          if (gmailError.message?.includes('invalid_grant') || gmailError.message?.includes('Token')) {
+            console.error('⚠️ Gmail API authentication failed. Please re-authorize:');
+            console.error('   Visit: /api/gmail/authorize');
           }
           
           // Don't throw - fall through to SMTP method
           console.log('📧 Falling back to SMTP (labels will NOT be applied)');
         }
       } else {
-        console.log('ℹ️ Gmail API not available, using SMTP (labels will not be applied)');
-        console.log('💡 To enable labels, configure Gmail API OAuth2 in .env file');
+        console.log('ℹ️ Gmail API not authorized, using SMTP (labels will not be applied)');
+        console.log('💡 To enable Gmail API with labels, visit: /api/gmail/authorize');
       }
 
       // Fallback to SMTP if Gmail API is not available
@@ -886,50 +531,7 @@ export function registerPayoutRoutes(app: Express): void {
         .replace(/^FINAL PAYABLE:/gm, '<h2 style="color: #16a34a; margin-top: 20px;">FINAL PAYABLE:</h2>')
         .replace(/^Order Statistics:/gm, '<h3 style="color: #7c3aed; margin-top: 15px;">Order Statistics:</h3>');
 
-      // For SMTP threading: Try to find existing message ID for this recipient
-      // This helps Gmail group emails into the same conversation
-      let inReplyTo: string | undefined;
-      let references: string | undefined;
-      
-      if (gmail) {
-        try {
-          const subjectPrefix = request.subject.includes('Payout Statement') 
-            ? 'Payout Statement' 
-            : request.subject.substring(0, 30);
-          const query = `to:${request.to} subject:"${subjectPrefix}"`;
-          const searchResponse = await gmail.users.messages.list({
-            userId: 'me',
-            q: query,
-            maxResults: 1,
-          });
-          
-          if (searchResponse.data.messages && searchResponse.data.messages.length > 0) {
-            const messageId = searchResponse.data.messages[0].id;
-            const messageDetails = await gmail.users.messages.get({
-              userId: 'me',
-              id: messageId,
-              format: 'metadata',
-              metadataHeaders: ['Message-ID', 'References'],
-            });
-            
-            const headers = messageDetails.data.payload?.headers || [];
-            const existingMessageId = headers.find((h: any) => h.name === 'Message-ID')?.value;
-            const existingReferences = headers.find((h: any) => h.name === 'References')?.value;
-            
-            if (existingMessageId) {
-              inReplyTo = existingMessageId;
-              references = existingReferences 
-                ? `${existingReferences} ${existingMessageId}` 
-                : existingMessageId;
-              console.log(`🔗 Found existing email thread - will group with previous email`);
-            }
-          }
-        } catch (threadError: any) {
-          console.log('ℹ️ Could not find existing thread for SMTP (will create new conversation):', threadError.message);
-        }
-      }
-
-      // Send email
+      // Send email via SMTP
       console.log('📤 Attempting to send email...');
       const smtpCcList = parseCcAddresses(request.cc);
 
@@ -940,9 +542,6 @@ export function registerPayoutRoutes(app: Express): void {
         ...(smtpCcList.length > 0 ? { cc: smtpCcList } : {}),
         subject: request.subject,
         text: request.content,
-        // Add threading headers for SMTP to group emails in same conversation
-        ...(inReplyTo && { inReplyTo }),
-        ...(references && { references }),
         html: `
           <!DOCTYPE html>
           <html>
@@ -1132,268 +731,7 @@ export function registerPayoutRoutes(app: Express): void {
     }
   });
 
-  // Gmail OAuth2 setup endpoint (for getting authorization URL)
-  app.get('/api/gmail-oauth-setup', async (req, res) => {
-    try {
-      if (!process.env.GMAIL_CLIENT_ID || !process.env.GMAIL_CLIENT_SECRET) {
-        return res.status(400).json({
-          message: 'Gmail OAuth2 credentials not configured',
-          instructions: [
-            '1. Go to https://console.cloud.google.com/',
-            '2. Create a new project or select existing one',
-            '3. Enable Gmail API',
-            '4. Create OAuth 2.0 credentials',
-            '5. Add authorized redirect URI: urn:ietf:wg:oauth:2.0:oob',
-            '6. Set GMAIL_CLIENT_ID and GMAIL_CLIENT_SECRET in .env file',
-            '7. Visit this endpoint again to get authorization URL',
-          ]
-        });
-      }
-
-      const oauth2Client = new google.auth.OAuth2(
-        process.env.GMAIL_CLIENT_ID,
-        process.env.GMAIL_CLIENT_SECRET,
-        process.env.GMAIL_REDIRECT_URI || 'urn:ietf:wg:oauth:2.0:oob'
-      );
-
-      const scopes = [
-        'https://www.googleapis.com/auth/gmail.send',
-        'https://www.googleapis.com/auth/gmail.modify',
-        'https://www.googleapis.com/auth/gmail.labels',
-      ];
-
-      const authUrl = oauth2Client.generateAuthUrl({
-        access_type: 'offline',
-        scope: scopes,
-        prompt: 'consent', // Force consent to get refresh token
-      });
-
-      res.json({
-        message: 'Gmail OAuth2 setup',
-        authUrl: authUrl,
-        instructions: [
-          '1. Visit the authUrl above in your browser',
-          '2. Authorize the application',
-          '3. Copy the authorization code from the redirect page',
-          '4. Use POST /api/gmail-oauth-callback with the code to get refresh token',
-        ]
-      });
-    } catch (error: any) {
-      console.error('Error setting up Gmail OAuth2:', error);
-      res.status(500).json({ message: error.message || 'Error setting up OAuth2' });
-    }
-  });
-
-  // Gmail OAuth2 callback endpoint (to exchange code for refresh token)
-  app.post('/api/gmail-oauth-callback', async (req, res) => {
-    try {
-      const { code } = req.body;
-      if (!code) {
-        return res.status(400).json({ message: 'Authorization code is required' });
-      }
-
-      if (!process.env.GMAIL_CLIENT_ID || !process.env.GMAIL_CLIENT_SECRET) {
-        return res.status(400).json({ message: 'Gmail OAuth2 credentials not configured' });
-      }
-
-      const oauth2Client = new google.auth.OAuth2(
-        process.env.GMAIL_CLIENT_ID,
-        process.env.GMAIL_CLIENT_SECRET,
-        process.env.GMAIL_REDIRECT_URI || 'urn:ietf:wg:oauth:2.0:oob'
-      );
-
-      const { tokens } = await oauth2Client.getToken(code);
-      
-      res.json({
-        message: 'OAuth2 authorization successful!',
-        refreshToken: tokens.refresh_token,
-        instructions: [
-          'Add this to your .env file:',
-          `GMAIL_REFRESH_TOKEN=${tokens.refresh_token}`,
-          'Then restart your server to use Gmail API with labels.',
-        ]
-      });
-    } catch (error: any) {
-      console.error('Error in OAuth2 callback:', error);
-      res.status(500).json({ message: error.message || 'Error processing OAuth2 callback'       });
-    }
-  });
-
-  // Get all Gmail labels
-  app.get('/api/gmail-labels', async (req, res) => {
-    try {
-      const gmail = await getGmailClient();
-      
-      if (!gmail) {
-        return res.status(400).json({
-          success: false,
-          message: 'Gmail API not configured',
-          labels: [],
-        });
-      }
-
-      const response = await gmail.users.labels.list({
-        userId: 'me',
-      });
-
-      // Filter to only show user-created labels (not system labels)
-      const userLabels = (response.data.labels || [])
-        .filter((label: any) => label.type === 'user')
-        .map((label: any) => ({
-          id: label.id,
-          name: label.name,
-          type: label.type,
-        }))
-        .sort((a: any, b: any) => a.name.localeCompare(b.name));
-
-      res.json({
-        success: true,
-        labels: userLabels,
-      });
-    } catch (error: any) {
-      console.error('Error fetching Gmail labels:', error);
-      res.status(500).json({
-        success: false,
-        message: 'Error fetching labels',
-        error: error.message,
-        labels: [],
-      });
-    }
-  });
-
-  // Create a new Gmail label
-  app.post('/api/gmail-labels', async (req, res) => {
-    try {
-      const { name } = req.body;
-      
-      if (!name || typeof name !== 'string' || name.trim().length === 0) {
-        return res.status(400).json({
-          success: false,
-          message: 'Label name is required',
-        });
-      }
-
-      const gmail = await getGmailClient();
-      
-      if (!gmail) {
-        return res.status(400).json({
-          success: false,
-          message: 'Gmail API not configured',
-        });
-      }
-
-      // Check if label already exists
-      const labelsResponse = await gmail.users.labels.list({
-        userId: 'me',
-      });
-
-      const existingLabel = labelsResponse.data.labels?.find(
-        (label: any) => label.name === name.trim() && label.type === 'user'
-      );
-
-      if (existingLabel) {
-        return res.json({
-          success: true,
-          message: 'Label already exists',
-          label: {
-            id: existingLabel.id,
-            name: existingLabel.name,
-            type: existingLabel.type,
-          },
-        });
-      }
-
-      // Create new label
-      const createResponse = await gmail.users.labels.create({
-        userId: 'me',
-        requestBody: {
-          name: name.trim(),
-          labelListVisibility: 'labelShow',
-          messageListVisibility: 'show',
-        },
-      });
-
-      res.json({
-        success: true,
-        message: 'Label created successfully',
-        label: {
-          id: createResponse.data.id,
-          name: createResponse.data.name,
-          type: createResponse.data.type,
-        },
-      });
-    } catch (error: any) {
-      console.error('Error creating Gmail label:', error);
-      res.status(500).json({
-        success: false,
-        message: 'Error creating label',
-        error: error.message,
-      });
-    }
-  });
-
-  // Test Gmail API connection and label
-  app.get('/api/test-gmail-api', async (req, res) => {
-    try {
-      console.log('🧪 Testing Gmail API connection...');
-      
-      const gmail = await getGmailClient();
-      
-      if (!gmail) {
-        return res.status(400).json({
-          success: false,
-          message: 'Gmail API not configured. Please check your .env file.',
-          configured: {
-            clientId: !!process.env.GMAIL_CLIENT_ID,
-            clientSecret: !!process.env.GMAIL_CLIENT_SECRET,
-            refreshToken: !!process.env.GMAIL_REFRESH_TOKEN,
-          }
-        });
-      }
-
-      // Test getting user profile
-      const profile = await gmail.users.getProfile({ userId: 'me' });
-      console.log('✅ Gmail API connection successful');
-      console.log('📧 Email address:', profile.data.emailAddress);
-
-      // Test getting/creating label
-      let labelId: string;
-      try {
-        labelId = await getOrCreateLabel(gmail, 'Dropshipper');
-        console.log('✅ Label "Dropshipper" is available');
-      } catch (labelError: any) {
-        console.error('❌ Error with label:', labelError);
-        return res.status(500).json({
-          success: false,
-          message: 'Gmail API connected but label operation failed',
-          error: labelError.message,
-          profile: {
-            email: profile.data.emailAddress,
-          }
-        });
-      }
-
-      res.json({
-        success: true,
-        message: 'Gmail API is working correctly!',
-        profile: {
-          email: profile.data.emailAddress,
-        },
-        label: {
-          name: 'Shipowl Finance Team',
-          id: labelId,
-        },
-        note: 'Labels will be applied automatically when sending emails via Gmail API'
-      });
-    } catch (error: any) {
-      console.error('❌ Gmail API test failed:', error);
-      res.status(500).json({
-        success: false,
-        message: 'Gmail API test failed',
-        error: error.message,
-        code: error.code,
-        details: error.response?.data || error.toString()
-      });
-    }
-  });
+  // Note: Gmail OAuth2 endpoints have been moved to /server/routes/gmail.ts
+  // Legacy endpoints (/api/gmail-oauth-setup, /api/gmail-labels, /api/test-gmail-api) 
+  // are now handled by the centralized gmail routes with proper redirect support.
 }

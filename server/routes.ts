@@ -7,11 +7,13 @@ import { registerAnalyticsRoutes } from "./routes/analytics";
 import { registerRtsRtoRoutes } from "./routes/rts-rto";
 import { registerTransparencyRoutes } from "./routes/transparency";
 import { registerAuthRoutes } from "./routes/auth";
+import { registerGmailRoutes } from "./routes/gmail";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   
   // Register all route modules
   registerAuthRoutes(app);
+  registerGmailRoutes(app); // Gmail OAuth2 routes - registered early for auth flow
   registerUploadRoutes(app);
   registerPayoutRoutes(app);
   registerSettingsRoutes(app);
